@@ -1,0 +1,9 @@
+{
+  "title": "Async Scraper Tool",
+  "name": "async_scraper",
+  "version": "0.1.0",
+  "description": "Async URL scraper with OpenWebUI valves, TTL cache, retry logic, advanced main-content extractor, and event emission.",
+  "author": "You",
+  "entrypoint": "main:AsyncScraper",
+  "requires": ["aiohttp", "beautifulsoup4", "pydantic", "typing-extensions"]
+}
