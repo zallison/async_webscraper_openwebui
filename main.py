@@ -4,27 +4,47 @@ from typing import Optional, Dict, Any
 import aiohttp
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
-import html2text
 import json
 import re
+try:
+    import html2text
+except ImportError as e:
+    class html2text:
+        def html2text(str):
+            return str
+DEF
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "DNT": "1",  # Do Not Track
+    "Cache-Control": "max-age=0",
+    "Pragma": "no-cache"
+}
 
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/141.0.0.0 Safari/537.36"
-)
-
+try:
+    from fake_useragent import UserAgent
+    ua = UserAgent()
+    HEADERS["user_agent"] = ua.random()
+except ImportError as e:
+    pass
 
 class Tools:
+    VERSION = "0.1.2"
+
     class Valves(BaseModel):
         model_config = {"arbitrary_types_allowed": True}
 
         user_agent: str = Field(
             DEFAULT_USER_AGENT,
             description="User-Agent header to use for HTTP requests.",
-        )
-        use_advanced_main: bool = Field(
-            True, description="If true, use advanced main-content extractor."
         )
         retries: int = Field(
             3, description="Number of retry attempts for HTTP requests."
@@ -45,7 +65,7 @@ class Tools:
 
     def _valves_snapshot(self):
         v = self.valves
-        return (v.user_agent, v.use_advanced_main, v.retries, v.cache_ttl, v.timeout)
+        return (v.user_agent, v.retries, v.cache_ttl, v.timeout)
 
     async def clear_cache(self) -> str:
         """Clear the LRU cache"""
@@ -93,25 +113,27 @@ class Tools:
         if self._session and not self._session.closed:
             return self._session
 
-        headers = {
-            "User-Agent": str(self.valves.user_agent),
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept": "text/html,text/json,text/xml,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        }
+        headers = HEADERS.copy()
+        if self.user_agent:
+            headers["User-Agent"]=self.user_agent
         self._session = aiohttp.ClientSession(headers=headers)
         return self._session
 
     # ------------------------ Main Scrape Logic ------------------------
+    async def html(self, url: str, return_html: bool = True, emitter=None):
+        return await self.scrape(url=url, return_html=return_html, emitter=emitter)
 
-    async def scrape_with_html(self, url: str, emitter=None):
-        return await self.scrape(url=url, return_html=True, emitter=emitter)
+    async def fetch(self, url: str, return_html: bool = False, emitter=None):
+        return await self.scrape(url=url, return_html=return_html, emitter=emitter)
 
-    async def async_web_scraper(self, url: str, return_html=None, emitter=None):
-        return await self.scrape(url=url, return_html=True, emitter=emitter)
-    async def web_scraper(self, url: str, return_html=None, emitter=None):
-        return await self.scrape(url=url, return_html=True, emitter=emitter)
-    async def web_scrape(self, url: str, return_html=None, emitter=None):
-        return await self.scrape(url=url, return_html=True, emitter=emitter)
+    async def download(self, url: str, return_html: bool = False, emitter=None):
+        return await self.scrape(url, return_html=return_html, emitter=emitter)
+
+    async def pull(self, url: str, return_html: bool = False, emitter=None):
+        return await self.scrape(url, return_html=return_html, emitter=emitter)
+
+    async def get(self, url: str, return_html: bool = False, emitter=None):
+        return await self.scrape(url, return_html=return_html, emitter=emitter)
 
     async def scrape(
         self, url: str, return_html: bool = False, emitter=None
@@ -258,8 +280,8 @@ class Tools:
             return html
 
         soup = BeautifulSoup(html, "html.parser")
-        if not soup:
-            return html
+        if not soup or not html:
+            raise Exception("no soup or html")
 
         title = _get_title(soup, html)
 
@@ -287,7 +309,8 @@ class Tools:
 
         if emitter:
             await self._emit(emitter, {"result": result, "type": "done", "url": url})
-
+        if not result:
+            raise Exception("no results")
         return result
 
 
