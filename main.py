@@ -77,6 +77,10 @@ class Tools:
             300, description="TTL in seconds for the in-memory cache."
         )
         timeout: int = Field(10, description="Request timeout in seconds.")
+        min_summary_size: int = Field(
+            2048, # Set appropriate for you context length.
+            description="How large a response do we need before we stop just returning html? Increase this value according to your context length",
+        )
 
     def __init__(self):
         self.valves = self.Valves()
@@ -88,7 +92,7 @@ class Tools:
 
     def _valves_snapshot(self):
         v = self.valves
-        return (v.user_agent, v.retries, v.cache_ttl, v.timeout)
+        return (v.user_agent, v.retries, v.cache_ttl, v.timeout, v.min_summary_size)
 
     async def close(self) -> None:
         if self._session and not self._session.closed:
@@ -217,6 +221,13 @@ class Tools:
         def _get_all_content(soup, html) -> str:
             return html2text.html2text(html)
 
+        def _summarize(text: str, max_sentences=3) -> str:
+            """Simple naive summarizer"""
+            import re
+
+            sentences = re.split(r"(?<=[.!?]) +", text)
+            return " ".join(sentences[:max_sentences])
+
         # --- Actual work ---
         self._ensure_synced()
         if not url:
@@ -256,7 +267,8 @@ class Tools:
         except Exception as e:
             pass
 
-        if len(html) <= 2048:
+        size_check = int(self.valves.min_summary_size) or 0
+        if size_check and len(html) <= size_check:
             return_html = True
 
         soup = BeautifulSoup(html, "html.parser")
