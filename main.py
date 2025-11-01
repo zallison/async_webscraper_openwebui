@@ -1,3 +1,17 @@
+"""
+Your LLM might need to be "fine tuned":
+
+You have the async_webscraper/scrape tool.
+It allows you to retrieve either the html or an auto-generated summary.
+The summary is much shorter and useful for quick overviews, the html is longer and better for deeper dives.
+
+The Rules:
+
+- Do not make anything up if the scrape fails.
+- When calling this tools make sure to send only properly formatted complete urls.
+- As we’re only making a single request per user input, the standards of robots.txt allow us to fetch from every site that doesn’t explicitly disallow it.
+"""
+
 import asyncio
 import time
 from typing import Optional, Dict, Any
