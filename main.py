@@ -1,7 +1,10 @@
 """
+
+Renaming this tool to "webscraper" makes models more likely to find it.
+
 Your LLM might need to be "fine tuned":
 
-You have the async_webscraper/scrape tool.
+You have the async_webscraper/scrape tool, along with helpers for specific sites.
 It allows you to retrieve either the html or an auto-generated summary.
 The summary is much shorter and useful for quick overviews, the html is longer and better for deeper dives.
 
@@ -16,7 +19,6 @@ import asyncio
 import time
 from typing import Optional, Dict, Any
 import aiohttp
-from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 import json
 import re
@@ -36,6 +38,7 @@ except ImportError as e:
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 HEADERS = {
+    "User_Agent": USER_AGENT,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
     "Accept-Encoding": "gzip, deflate, br",
@@ -61,7 +64,7 @@ except Exception as e:
 
 
 class Tools:
-    VERSION = "0.1.2"
+    VERSION = "0.1.3"
 
     class Valves(BaseModel):
         model_config = {"arbitrary_types_allowed": True}
@@ -73,12 +76,9 @@ class Tools:
         retries: int = Field(
             3, description="Number of retry attempts for HTTP requests."
         )
-        cache_ttl: int = Field(
-            300, description="TTL in seconds for the in-memory cache."
-        )
         timeout: int = Field(10, description="Request timeout in seconds.")
         min_summary_size: int = Field(
-            2048, # Set appropriate for you context length.
+            2048,  # Set appropriate for you context length.
             description="How large a response do we need before we stop just returning html? Increase this value according to your context length",
         )
 
@@ -92,7 +92,7 @@ class Tools:
 
     def _valves_snapshot(self):
         v = self.valves
-        return (v.user_agent, v.retries, v.cache_ttl, v.timeout, v.min_summary_size)
+        return (v.user_agent, v.retries, v.timeout, v.min_summary_size)
 
     async def close(self) -> None:
         if self._session and not self._session.closed:
@@ -137,7 +137,84 @@ class Tools:
         self._session = aiohttp.ClientSession(headers=headers)
         return self._session
 
-    # ------------------------ Main Scrape Logic ------------------------
+    # ------------------------ Helpers and Aliases ------------------------
+    ## Wikipedia
+    async def wikipedia_page(page: str, return_html: bool = True, emitter=None) -> str:
+        return await self.wikipedia(page=page, return_html=return_html, emitter=emitter)
+
+    async def wikipedia(
+        self, page: str, return_html: bool = True, lang: str = "en", emitter=None
+    ) -> str:
+        """
+        Fetch json from wikipedia. returns the English version
+        TODO: language valve
+        """
+        url = f"https://{lang}.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext&format=json&titles={page}"
+        return await self.scrape(url=url, return_html=return_html, emitter=emitter)
+
+    async def simple_wikipedia(self, page: str, return_html=True, emitter=None) -> str:
+        """
+        Get a simple explanation about "page".
+        """
+        return await self.wikipedia(
+            lang="simple", url=url, return_html=return_html, emitter=emitter
+        )
+
+    #
+    # Multiple Wikipedia articles
+    #
+    async def wikipedia_pages(
+        self, pages: list[str], return_html: bool = True, emitter=None
+    ):
+        return await self.wikipedia_multi(
+            lang="simple", pages=pages, return_html=return_html, emitter=emitter
+        )
+
+    async def wikipedia_multi(
+        self, pages: list[str], return_html: bool = True, emitter=None
+    ) -> str:
+        """
+        Retrieve Multiple Pages from wikipedia
+        pages: a list of str of pages to retrieve
+        """
+        result = ""
+        for page in pages:
+            scrape = await self.wikipedia(page=page)
+            result += str(scrape)
+        return result
+
+    # ------------------------ Helpers and Aliases------------------------
+
+    ##
+    ## List Aliases
+    ##
+    async def get_multi(self, urls: list[str], return_html: bool = True, emitter=None):
+        return await self.scrape_multi(
+            urls=urls, return_html=return_html, emitter=emitter
+        )
+
+    async def multi_scrape(
+        self, urls: list[str], return_html: bool = True, emitter=None
+    ):
+        return await self.scrape_multi(
+            urls=urls, return_html=return_html, emitter=emitter
+        )
+
+    async def scrape_multi(
+        self, urls: list[str], return_html: bool = True, emitter=None
+    ):
+        result = ""
+        for page in urls:
+            scrape = await self.scrape(
+                url=page, return_html=return_html, emitter=emitter
+            )
+            result += str(scrape)
+        return result
+
+    ##
+    ## Simple Aliases
+    ##
+
     async def html(self, url: str, return_html: bool = True, emitter=None):
         return await self.scrape(url=url, return_html=return_html, emitter=emitter)
 
@@ -159,13 +236,17 @@ class Tools:
     async def summarize(self, url: str, emitter=None):
         return await self.scrape(url, return_html=False, emitter=emitter)
 
+    # ------------------------ Main Scrape Logic ------------------------
+
     async def scrape(
         self, url: str, return_html: bool = True, emitter=None
     ) -> Dict[str, Any]:
         """
         Fetch, parse, and extract title, main content, summary
-        option: return_html = True to get ONLY the html.
-        option: return_html = False to get ONLY extracted fields.
+        option: return_html = True to get ONLY the raw content.
+        option: return_html = False to get ONLY the summary.
+
+        Note: files below valve min_summary_size will be returned as-is
         """
 
         @lru_cache(maxsize=128, typed=False)
@@ -218,7 +299,7 @@ class Tools:
                             )
             raise Exception(f"Failed to fetch {url}: {last_exc}")
 
-        def _get_all_content(soup, html) -> str:
+        def _get_all_content(html) -> str:
             return html2text.html2text(html)
 
         def _summarize(text: str, max_sentences=3) -> str:
@@ -271,17 +352,15 @@ class Tools:
         if size_check and len(html) <= size_check:
             return_html = True
 
-        soup = BeautifulSoup(html, "html.parser")
-        if not soup or not html:
-            raise Exception("no soup or html")
-
         if emitter:
             await self._emit(emitter, {"result": html, "type": "done", "url": url})
 
         if return_html:
             return html
 
-        content = _get_all_content(soup, html)
-        if not content:
-            return html
-        return content
+        content = _get_all_content(html)
+
+        if content:
+            return content
+
+        return html
