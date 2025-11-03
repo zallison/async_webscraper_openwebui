@@ -1,13 +1,23 @@
 ## About
 
-Scrape a web page using requests, and get either the html or a summary using html2text or lxml.
+Scrape a web page using requests, and get either the html or a summary using html2text or lxml.  With support for wikipedia api, pages for wikipedia will be auto-rerouted to the API for much better results.
+
+Data of type XML or JSON will be returned unmodified.
 
 ## Notes:
 - Your model may not like "scrape" so try "fetch", "get", or others if blocked.
-- Often blocked by "anti-scrape" mechanism.  (working on it)
+- Sometimes blocked by "anti-scrape" mechanism
 - Try the "Fine Tuning" section for an example system instruction.
 
 -----
+### New in v.0.1.4:
+- Scrape function now allow for multiple urls to be given
+- Bugfixes, better aliases
+
+### New in v0.1.3:
+- added wikipedia helpers
+- auto-redirect to wiki api
+
 ### New in v0.1.2:
 - removed beautiful soup dependencies
 - made html2text optional, with a lxml fallback function
