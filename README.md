@@ -40,9 +40,10 @@ Scrape a web page using requests, and get either the html or a summary using htm
 
 ------
 ## Valves:
-user_agent: The agent to pretend to be.
-retries: Number of times to attempt the scrape
-min_summary_size: the minimum size of a page before a summary is allowed. Set according to your model and context preferences.
+
+- user_agent: The agent to pretend to be.
+- retries: Number of times to attempt the scrape
+- min_summary_size: the minimum size of a page before a summary is allowed. Set according to your model and context preferences.
 -------
 
 ## Fine Tuning
@@ -64,3 +65,4 @@ The Rules:
 
 Feedback more than welcome.
 author: openwebui@zackallison.com
+
