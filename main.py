@@ -1,10 +1,19 @@
 """
+title: Async Webscraper
+author: Zack Allison <zack@zackallison.com>
+version: 0.1.3
+"""
+
+"""
+NOTES:
 
 Renaming this tool to "webscraper" makes models more likely to find it.
 
-Your LLM might need to be "fine tuned":
+Your LLM might need to be "fine tuned", an example:
 
-You have the async_webscraper/scrape tool, along with helpers for specific sites.
+You have the [async_webscraper/scrape] tool, along with helpers for specific sites.
+Call the scrape tool with a list or urls to fetch.
+Call the wikipedia tool with a list of urls or titles.
 It allows you to retrieve either the html or an auto-generated summary.
 The summary is much shorter and useful for quick overviews, the html is longer and better for deeper dives.
 
@@ -78,8 +87,11 @@ class Tools:
         )
         timeout: int = Field(10, description="Request timeout in seconds.")
         min_summary_size: int = Field(
-            2048,  # Set appropriate for you context length.
-            description="How large a response do we need before we stop just returning html? Increase this value according to your context length",
+            1024,  # Set appropriate for you context length.
+            description="How large a response do we need before we stop just returning html. Increase this value according to your context length",
+        )
+        max_summary_size: int = Field(
+            1024 * 10, description="Cut a summary off after this many characters."
         )
 
     def __init__(self):
@@ -139,108 +151,70 @@ class Tools:
 
     # ------------------------ Helpers and Aliases ------------------------
     ## Wikipedia
-    async def wikipedia_page(page: str, return_html: bool = True, emitter=None) -> str:
-        return await self.wikipedia(page=page, return_html=return_html, emitter=emitter)
-
-    async def wikipedia(
+    async def _wiki_do_not_call_me(  # stupid LLMs calling internal functions.
         self, page: str, return_html: bool = True, lang: str = "en", emitter=None
     ) -> str:
         """
         Fetch json from wikipedia. returns the English version
         TODO: language valve
         """
+        url = ""
+        if "http" in page or "wikipedia.com" in page:
+            page = page.rsplit("/", 1)[-1]
+        page = page.title()  # Title Case for Wikipedia
         url = f"https://{lang}.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext&format=json&titles={page}"
         return await self.scrape(url=url, return_html=return_html, emitter=emitter)
 
-    async def simple_wikipedia(self, page: str, return_html=True, emitter=None) -> str:
-        """
-        Get a simple explanation about "page".
-        """
-        return await self.wikipedia(
-            lang="simple", url=url, return_html=return_html, emitter=emitter
-        )
-
-    #
-    # Multiple Wikipedia articles
-    #
-    async def wikipedia_pages(
-        self, pages: list[str], return_html: bool = True, emitter=None
-    ):
-        return await self.wikipedia_multi(
-            lang="simple", pages=pages, return_html=return_html, emitter=emitter
-        )
-
-    async def wikipedia_multi(
-        self, pages: list[str], return_html: bool = True, emitter=None
+    async def wikipedia(
+        self,
+        pages: list[str] = [],
+        page: str = None,
+        url: str = None,
+        urls: list[str] = [],
+        return_html: bool = True,
+        emitter=None,
     ) -> str:
         """
         Retrieve Multiple Pages from wikipedia
         pages: a list of str of pages to retrieve
         """
-        result = ""
+        if page:
+            pages.append(page)
+        if url:
+            pages.append(url)
+        if urls:
+            pages.append(urls)
+
+        retval = ""
         for page in pages:
-            scrape = await self.wikipedia(page=page)
-            result += str(scrape)
-        return result
+            scrape = await self._wiki_do_not_call_me(
+                page=page, return_html=return_html, emitter=emitter
+            )
+            retval += str(scrape)
+        return retval
+
+    wikipedia_multi = wikipedia
+    wikipedia_pages = wikipedia
+    wikipedia_page = wikipedia
+    get_wiki = wikipedia
 
     # ------------------------ Helpers and Aliases------------------------
+    ## Summarize
+    async def summarize(self, urls: list[str] = [], url: str = None, emitter=None):
+        return await self.scrape(urls, url=url, return_html=False, emitter=emitter)
 
-    ##
-    ## List Aliases
-    ##
-    async def get_multi(self, urls: list[str], return_html: bool = True, emitter=None):
-        return await self.scrape_multi(
-            urls=urls, return_html=return_html, emitter=emitter
-        )
-
-    async def multi_scrape(
-        self, urls: list[str], return_html: bool = True, emitter=None
-    ):
-        return await self.scrape_multi(
-            urls=urls, return_html=return_html, emitter=emitter
-        )
-
-    async def scrape_multi(
-        self, urls: list[str], return_html: bool = True, emitter=None
-    ):
-        result = ""
-        for page in urls:
-            scrape = await self.scrape(
-                url=page, return_html=return_html, emitter=emitter
-            )
-            result += str(scrape)
-        return result
-
-    ##
-    ## Simple Aliases
-    ##
-
-    async def html(self, url: str, return_html: bool = True, emitter=None):
-        return await self.scrape(url=url, return_html=return_html, emitter=emitter)
-
-    async def fetch(self, url: str, return_html: bool = False, emitter=None):
-        return await self.scrape(url=url, return_html=return_html, emitter=emitter)
-
-    async def download(self, url: str, return_html: bool = False, emitter=None):
-        return await self.scrape(url, return_html=return_html, emitter=emitter)
-
-    async def pull(self, url: str, return_html: bool = False, emitter=None):
-        return await self.scrape(url, return_html=return_html, emitter=emitter)
-
-    async def get(self, url: str, return_html: bool = False, emitter=None):
-        return await self.scrape(url, return_html=return_html, emitter=emitter)
-
-    async def get_summary(self, url: str, emitter=None):
-        return await self.scrape(url, return_html=False, emitter=emitter)
-
-    async def summarize(self, url: str, emitter=None):
-        return await self.scrape(url, return_html=False, emitter=emitter)
+    get_summary = summarize
+    overview = summarize
 
     # ------------------------ Main Scrape Logic ------------------------
 
     async def scrape(
-        self, url: str, return_html: bool = True, emitter=None
-    ) -> Dict[str, Any]:
+        self,
+        urls: list[str] = [],
+        url: str = None,
+        return_html: bool = True,
+        emitter=None,
+    ) -> Dict[str, Any] | str:
         """
         Fetch, parse, and extract title, main content, summary
         option: return_html = True to get ONLY the raw content.
