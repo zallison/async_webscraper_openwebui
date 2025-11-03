@@ -1,7 +1,7 @@
 """
 title: Async Webscraper
 author: Zack Allison <zack@zackallison.com>
-version: 0.1.3
+version: 0.1.4
 """
 
 """
@@ -26,12 +26,11 @@ The Rules:
 
 import asyncio
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 import aiohttp
 from pydantic import BaseModel, Field
 import json
 import re
-from functools import lru_cache
 
 try:
     import html2text
@@ -39,6 +38,7 @@ except ImportError as e:
     import lxml
 
     class html2text:
+        @staticmethod
         def html2text(html: str) -> str:
             plain_text = lxml.etree.HTML(html).xpath("//text()")
             return " ".join(plain_text)
@@ -47,7 +47,7 @@ except ImportError as e:
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 HEADERS = {
-    "User_Agent": USER_AGENT,
+    "User-Agent": USER_AGENT,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
     "Accept-Encoding": "gzip, deflate, br",
@@ -62,7 +62,6 @@ HEADERS = {
     "Pragma": "no-cache",
 }
 
-
 try:
     from fake_useragent import UserAgent
 
@@ -73,7 +72,7 @@ except Exception as e:
 
 
 class Tools:
-    VERSION = "0.1.3"
+    VERSION = "0.1.4"
 
     class Valves(BaseModel):
         model_config = {"arbitrary_types_allowed": True}
@@ -87,7 +86,7 @@ class Tools:
         )
         timeout: int = Field(10, description="Request timeout in seconds.")
         min_summary_size: int = Field(
-            1024,  # Set appropriate for you context length.
+            1024,  # Set appropriate for your context length.
             description="How large a response do we need before we stop just returning html. Increase this value according to your context length",
         )
         max_summary_size: int = Field(
@@ -214,7 +213,7 @@ class Tools:
         url: str = None,
         return_html: bool = True,
         emitter=None,
-    ) -> Dict[str, Any] | str:
+    ) -> Union[Dict[str, Any], str]:  # Fixed typing here
         """
         Fetch, parse, and extract title, main content, summary
         option: return_html = True to get ONLY the raw content.
@@ -222,8 +221,17 @@ class Tools:
 
         Note: files below valve min_summary_size will be returned as-is
         """
+        if url:
+            urls.append(url)
+        result = ""
+        for page in urls:
+            val = await self._scrape(url=page, return_html=return_html, emitter=emitter)
+            result += str(val)
+        return result
 
-        @lru_cache(maxsize=128, typed=False)
+    async def _scrape(self, url: str, return_html: bool = True, emitter=None) -> str:
+        """Internal Method: Do not call"""
+
         async def _fetch(self, url: str, emitter=None) -> str:
             sess = await self._get_session()
             retries = max(0, int(self.valves.retries))
@@ -273,15 +281,20 @@ class Tools:
                             )
             raise Exception(f"Failed to fetch {url}: {last_exc}")
 
+        def _clean_html(html):
+            flags = re.S | re.M | re.I
+            html = re.sub(r".*Contents.move to sidebar.hide", "", html, flags=flags)
+            html = re.sub(r"<head>.*</head>", "", html, flags=flags)
+            html = re.sub(r"<script>.*</script>", "", html, flags=flags)
+            return html
+
         def _get_all_content(html) -> str:
-            return html2text.html2text(html)
+            return html2text.html2text(_clean_html(html))
 
-        def _summarize(text: str, max_sentences=3) -> str:
+        def _summarize(self, text: str, max_words=2048) -> str:
             """Simple naive summarizer"""
-            import re
-
-            sentences = re.split(r"(?<=[.!?]) +", text)
-            return " ".join(sentences[:max_sentences])
+            words = re.split(r"\s+", _clean_html(text))
+            return " ".join(words[:max_words])
 
         # --- Actual work ---
         self._ensure_synced()
@@ -293,7 +306,7 @@ class Tools:
         try:
             html = await _fetch(self, url, emitter=emitter)
         except Exception as e:
-            # FIX: emit a clear failure event and avoid caching broken data
+            # Emit a clear failure event and avoid caching broken data
             if emitter:
                 await self._emit(
                     emitter,
@@ -322,19 +335,28 @@ class Tools:
         except Exception as e:
             pass
 
-        size_check = int(self.valves.min_summary_size) or 0
-        if size_check and len(html) <= size_check:
+        min_size_check = int(self.valves.min_summary_size) or 0
+        if min_size_check and len(html) <= min_size_check:
             return_html = True
 
         if emitter:
-            await self._emit(emitter, {"result": html, "type": "done", "url": url})
+            await self._emit(emitter, {"type": "done", "url": url})
 
         if return_html:
             return html
 
         content = _get_all_content(html)
+        max_size_check = int(self.valves.max_summary_size) or 0
+        if max_size_check and len(content) >= max_size_check:
+            content = content[:max_size_check]
 
         if content:
             return content
 
         return html
+
+    get = scrape
+    fetch = scrape
+    pull = scrape
+    download = scrape
+    html = scrape
