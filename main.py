@@ -378,6 +378,8 @@ class Tools:
 
         async def process(page: str):
             async with sem:
+                if emitter:
+                    await self._emit(emitter, {"type": "start", "url": page})
                 if redirect and ("wikipedia" in page and "api" not in page):
                     ret = await self.wikipedia(
                         url=page, return_raw=return_raw, emitter=emitter
@@ -413,6 +415,8 @@ class Tools:
         - emitter: optional callback for progress events
         Outputs: str
         """
+        if url is None:
+            raise ValueError("URL cannot be None")
 
         async def _fetch(self, url: str, emitter=None) -> str:
             sess = await self._get_session()
