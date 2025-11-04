@@ -458,7 +458,7 @@ class Tools:
                                 ctype.split("charset=", 1)[-1].split(";")[0].strip()
                             )
                         text = body.decode(charset or "utf-8", errors="replace")
-                        return text
+                        return text, ctype
                 except Exception as e:
                     last_exc = e
                     if attempt < retries:
@@ -505,18 +505,14 @@ class Tools:
 
         # / Helpers
 
-        #######################
-        # --- Actual work --- #
-        #######################
+        ####################################
+        # --- Actual work for scrape() --- #
+        ####################################
 
         self._ensure_synced()
-        if not url:
-            raise ValueError("Input must be a string with a valid 'url'.")
-        if emitter:
-            await self._emit(emitter, {"type": "start", "url": url})
 
         try:
-            html = await _fetch(self, url, emitter=emitter)
+            page_data, content_type = await _fetch(self, url, emitter=emitter)
         except Exception as e:
             # Emit a clear failure event and avoid caching broken data
             if emitter:
