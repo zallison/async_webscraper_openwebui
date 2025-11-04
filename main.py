@@ -539,15 +539,22 @@ class Tools:
                     emitter,
                     {"type": "found json", "url": url},
                 )
-                return_raw = True
+            if not return_raw:
+                # Return parsed JSON when plaintext is requested
+                return json_obj
+            # Otherwise return_raw = True means return as-is
         except (json.JSONDecodeError, ValueError):
             pass
 
         # Simple XML check via header
         try:
             xml_pattern = r"^\s*<\?xml\s"
-            if re.match(xml_pattern, page_data) or ET.fromstring(page_data) is not None:
-                return_raw = True
+            xml_elem = ET.fromstring(page_data) if re.match(xml_pattern, page_data) else None
+            if xml_elem is not None:
+                if not return_raw:
+                    # Return parsed XML element when plaintext is requested
+                    return xml_elem
+                # Otherwise return_raw = True means return as-is
         except Exception as e:  # pragma: no cover
             pass
 
@@ -559,7 +566,7 @@ class Tools:
             await self._emit(emitter, {"type": "done", "url": url})
 
         if return_raw:
-            return f"\n\n\n\n### url: {url} retrieved\n{page_data}\n\n\n"
+            return page_data
 
         content = _get_all_content(page_data)
 
@@ -567,11 +574,11 @@ class Tools:
         if max_size_check and len(content) >= max_size_check:
             content = content[:max_size_check]
 
-        if content:
-            return f"\n\n\n\n### url: {url} contains\n{page_data}\n\n\n"
+        if content and content.strip():
             return content
 
-        return f"\n\n\n\n### url: {url} retrieved\n{page_data}\n\n\n"
+        # If no content extracted, return the raw page_data
+        return page_data
 
     get = scrape
     fetch = scrape
