@@ -251,7 +251,7 @@ class Tools:
     async def _do_not_call_me(  # Wiki Scrape
         self,
         page: str,
-        return_html: bool = True,
+        return_raw: bool = True,
         lang: Optional[str] = None,
         emitter=None,
     ) -> str:
@@ -270,7 +270,7 @@ class Tools:
         title_param = urllib.parse.quote(page)
         _lang = (lang or self.valves.wiki_lang or "en").strip()
         url = f"https://{_lang}.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext&format=json&titles={title_param}"
-        return await self.scrape(url=url, return_html=return_html, emitter=emitter)
+        return await self.scrape(url=url, return_raw=return_raw, emitter=emitter)
 
     async def wikipedia(
         self,
@@ -278,7 +278,7 @@ class Tools:
         page: Optional[str] = None,
         url: Optional[str] = None,
         urls: Optional[List[str]] = None,
-        return_html: bool = True,
+        return_raw: bool = True,
         emitter=None,
     ) -> str:
         """Retrieve multiple pages from Wikipedia via the extracts API.
@@ -286,7 +286,7 @@ class Tools:
         Inputs:
         - pages/page: titles or page URLs; URLs are normalized to titles
         - url/urls: alternative URL inputs
-        - return_html: True to get raw API JSON; False to summarize API response
+        - return_raw: True to get raw API JSON; False to summarize API response
         - emitter: optional event sink
 
         Output: concatenated string of results
@@ -302,7 +302,7 @@ class Tools:
         retval = ""
         for page in pages:
             scrape = await self._do_not_call_me(
-                page=page, return_html=return_html, emitter=emitter
+                page=page, return_raw=return_raw, emitter=emitter
             )
             retval += str(scrape)
         return retval
@@ -317,16 +317,15 @@ class Tools:
     async def summarize(
         self, urls: Optional[List[str]] = None, url: Optional[str] = None, emitter=None
     ):
-        """Fetch and return plaintext summary for one or more URLs.
+        """
+        Fetch and return plaintext summary for one or more URLs.
 
         Inputs:
         - urls/url: one or many URLs to fetch
         - emitter: optional event sink
         Output: concatenated plaintext summaries
         """
-        return await self.scrape(
-            urls or [], url=url, return_html=False, emitter=emitter
-        )
+        return await self.scrape(urls or [], url=url, return_raw=False, emitter=emitter)
 
     get_summary = summarize
     overview = summarize
@@ -337,7 +336,7 @@ class Tools:
         self,
         urls: Optional[List[str]] = None,
         url: Optional[str] = None,
-        return_html: bool = True,
+        return_raw: bool = True,
         emitter=None,
         redirect: bool = True,
         return_structured: bool = False,
@@ -346,7 +345,7 @@ class Tools:
 
         Inputs:
         - urls/url: one or many URLs
-        - return_html: True returns raw body; False returns plaintext summary
+        - return_raw: True returns raw body; False returns plaintext summary
         - emitter: optional event sink receiving lifecycle events
         - redirect: if True, Wikipedia URLs are routed to the API helper
 
@@ -379,11 +378,11 @@ class Tools:
             async with sem:
                 if redirect and ("wikipedia" in page and "api" not in page):
                     ret = await self.wikipedia(
-                        url=page, return_html=return_html, emitter=emitter
+                        url=page, return_raw=return_raw, emitter=emitter
                     )
                 else:
                     ret = await self._scrape(
-                        url=page, return_html=return_html, emitter=emitter
+                        url=page, return_raw=return_raw, emitter=emitter
                     )
                 if return_structured:
                     return {"url": page, "content": ret}
@@ -401,13 +400,14 @@ class Tools:
         return " ".join(map(str, results))
 
     async def _scrape(
-        self, url: str, return_html: bool = True, emitter=None, redirect=True
+        self, url: str, return_raw: bool = True, emitter=None, redirect=True
     ) -> str:
-        """Low-level fetch + transform for a single URL.
+        """
+        Low-level fetch + transform for a single URL.
 
         Inputs:
         - url: target URL
-        - return_html: passthrough raw response when True; else plaintext summary
+        - return_raw: passthrough raw response when True; else plaintext summary
         - emitter: optional callback for progress events
         Outputs: str
         """
@@ -529,44 +529,45 @@ class Tools:
         try:
             # Prefer header detection if available via simplistic heuristic
             # Already decoded above; attempt JSON parse
-            json_obj = json.loads(html)
+            json_obj = json.loads(page_data)
             if emitter:
                 await self._emit(
                     emitter,
                     {"type": "found json", "url": url},
                 )
-            return json_obj
+                return_raw = True
         except (json.JSONDecodeError, ValueError):
             pass
 
         # Simple XML check via header
         try:
             xml_pattern = r"^\s*<\?xml\s"
-            if re.match(xml_pattern, html):
-                elem = ET.fromstring(html)
-                return elem
+            if re.match(xml_pattern, page_data) or ET.fromstring(page_data) is not None:
+                return_raw = True
         except Exception as e:  # pragma: no cover
             pass
 
         min_size_check = int(self.valves.min_summary_size) or 0
-        if min_size_check and len(html) <= min_size_check:
-            return_html = True
+        if min_size_check and len(page_data) <= min_size_check:
+            return_raw = True
 
         if emitter:
             await self._emit(emitter, {"type": "done", "url": url})
 
-        if return_html:
-            return html
+        if return_raw:
+            return f"\n\n\n\n### url: {url} retrieved\n{page_data}\n\n\n"
 
-        content = _get_all_content(html)
+        content = _get_all_content(page_data)
+
         max_size_check = int(self.valves.max_summary_size) or 0
         if max_size_check and len(content) >= max_size_check:
             content = content[:max_size_check]
 
         if content:
+            return f"\n\n\n\n### url: {url} contains\n{page_data}\n\n\n"
             return content
 
-        return html
+        return f"\n\n\n\n### url: {url} retrieved\n{page_data}\n\n\n"
 
     get = scrape
     fetch = scrape
