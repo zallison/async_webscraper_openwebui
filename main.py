@@ -94,6 +94,11 @@ class Tools:
         - timeout: per-request timeout seconds
         - min_summary_size: below this raw HTML is returned
         - max_summary_size: cap for plaintext length
+        - max_body_bytes: cap for data response size
+        - concurrency: how many files to download at once
+        - wiki_lang: which wiki language? defaults to "en"
+        - deny_hosts: Set a list of denied hosts to scrape from
+        - allow_hosts: A list to override deny_hosts.
 
         Outputs: N/A (configuration container)
         """
@@ -113,11 +118,11 @@ class Tools:
             description="Minimum response size to consider summarizing.",
         )
         max_summary_size: int = Field(
-            1024 * 10, description="Cut a summary off after this many characters."
+            1024 * 2, description="Cut a summary off after this many characters."
         )
         max_body_bytes: Optional[int] = Field(
-            None,
-            description="If set, cap the fetched response body to this many bytes.",
+            1024 * 3,
+            description="If set, cap the fetched response body to this many bytes, default 3k. Keep your context length in mind.",
         )
         concurrency: int = Field(
             5, description="Max concurrent requests when passing multiple URLs."
@@ -150,7 +155,18 @@ class Tools:
 
     def _valves_snapshot(self):
         v = self.valves
-        return (v.user_agent, v.retries, v.timeout, v.min_summary_size)
+        return (
+            v.user_agent,
+            v.retries,
+            v.timeout,
+            v.min_summary_size,
+            v.max_summary_size,
+            v.max_body_bytes,
+            v.concurrency,
+            v.wiki_lang,
+            v.allow_hosts,
+            v.deny_hosts,
+        )
 
     async def __aenter__(self):
         return self  # pragma: nocover
@@ -410,6 +426,7 @@ class Tools:
                     )
                 try:
                     async with sess.get(url, timeout=int(self.valves.timeout)) as resp:
+                        max_bytes: int = int(self.valves.max_body_bytes)
                         # Read with optional size cap
                         # Determine text vs bytes decoding later
                         body = await resp.read()
@@ -427,7 +444,6 @@ class Tools:
                                 {"type": "fetched", "status": status, "url": url},
                             )
                         # apply max_body_bytes
-                        max_bytes = self.valves.max_body_bytes
                         if (
                             isinstance(max_bytes, int)
                             and max_bytes > 0
