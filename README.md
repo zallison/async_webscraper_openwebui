@@ -2,7 +2,7 @@
 
 Scrape a web page using requests, and get either the html or a summary using html2text or lxml.  With support for wikipedia api, pages for wikipedia will be auto-rerouted to the API for much better results. Can scrape multiple urls.
 
-Data of type XML or JSON will be returned unmodified.
+Data of type XML or JSON will be parsed and returned as Python data structures (JSON -> dict/list; XML -> xml.etree.ElementTree.Element).
 
 -----
 ## Features:
@@ -54,7 +54,12 @@ Data of type XML or JSON will be returned unmodified.
 
 - user_agent: The agent to pretend to be.
 - retries: Number of times to attempt the scrape
-- min_summary_size: the minimum size of a page before a summary is allowed. Set according to your model and context preferences.
+- min_summary_size: the minimum size of a page before a summary is allowed.
+- concurrency: max parallel fetches for multi-URL scraping.
+- allow_hosts: optional host allowlist (exact hostnames).
+- deny_hosts: optional host blocklist (allowlist entries take precedence).
+- wiki_lang: language code for Wikipedia API (e.g., 'en', 'de').
+- max_body_bytes: truncate large bodies to this many bytes.
 -------
 
 ## Fine Tuning
