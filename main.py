@@ -340,7 +340,7 @@ class Tools:
         emitter=None,
         redirect: bool = True,
         return_structured: bool = False,
-    ) -> Union[Dict[str, Any], str, List[Dict[str, Any]]]:
+    ) -> str:
         """Fetch content and optionally convert HTML to plaintext.
 
         Inputs:
