@@ -26,7 +26,7 @@ The Rules:
 """
 
 import asyncio
-from typing import Optional, Dict, Any, Union, List, Callable
+from typing import Optional, Dict, Any, Union, List
 import aiohttp
 from pydantic import BaseModel, Field
 import json
@@ -168,7 +168,7 @@ class Tools:
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def _emit(self, emitter: Callable[..., Any], event: Dict[str, Any]) -> None:
+    async def _emit(self, emitter: Any, event: Dict[str, Any]) -> None:
         """
         Send an event to an optional emitter, supporting sync/async callables.
 
