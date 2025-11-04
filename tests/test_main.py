@@ -35,9 +35,10 @@ async def test_scrape_returns_html_by_default(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_summarize_returns_plaintext(monkeypatch):
-    main = with_fake_session({"https://example.com": [(200, "<html><body>Hello World</body></html>", None)]})
+    # Create content longer than default min_summary_size (1024)
+    long_content = "Hello World " * 100  # Makes it well over 1k
+    main = with_fake_session({"https://example.com": [(200, f"<html><body>{long_content}</body></html>", None)]})
     t = main.Tools()
-    t.valves.min_summary_size = 0  # allow summarization of small pages
     out = await t.summarize(url="https://example.com")
     assert "Hello" in out and "<html>" not in out
     await t.close()
@@ -50,9 +51,9 @@ async def test_json_and_xml_parsed(monkeypatch):
         "https://xml.io": [(200, "<?xml version=\"1.0\"?><root>ok</root>", None)],
     })
     t = main.Tools()
-    out_json = await t.scrape(url="https://json.io", return_html=False)
+    out_json = await t.scrape(url="https://json.io", return_raw=False)
     assert isinstance(out_json, dict) and out_json["a"] == 1
-    out_xml = await t.scrape(url="https://xml.io", return_html=False)
+    out_xml = await t.scrape(url="https://xml.io", return_raw=False)
     # Parsed to Element
     import xml.etree.ElementTree as ET
     assert isinstance(out_xml, ET.Element) and out_xml.tag == "root"
@@ -64,7 +65,7 @@ async def test_min_summary_size_forces_html(monkeypatch):
     main = with_fake_session({"https://small.io": [(200, "<html>hi</html>", None)]})
     t = main.Tools()
     t.valves.min_summary_size = 1000
-    out = await t.scrape(url="https://small.io", return_html=False)
+    out = await t.scrape(url="https://small.io", return_raw=False)
     assert "<html>hi</html>" in out
     await t.close()
 
@@ -144,7 +145,7 @@ async def test_wikipedia_helper_and_redirect_bug(monkeypatch):
     plan = {api_url: [(200, json.dumps({"query": {"pages": {"1": {"extract": "Alan Turing"}}}}), None)]}
     main = with_fake_session(plan)
     t = main.Tools()
-    out = await t.wikipedia(pages=["Alan Turing"], return_html=True)
+    out = await t.wikipedia(pages=["Alan Turing"], return_raw=True)
     assert "Alan Turing" in out or out.strip().startswith("{")
 
     # Redirect path in scrape should work now (no exception)
@@ -174,7 +175,7 @@ async def test_emitter_found_json_event(monkeypatch):
     main = with_fake_session(plan)
     t = main.Tools()
     emitter = Emitter()
-    out = await t.scrape(url="https://json.events", return_html=False, emitter=emitter)
+    out = await t.scrape(url="https://json.events", return_raw=False, emitter=emitter)
     assert isinstance(out, dict) and out["k"] == "v"
     types_seen = [e.get("type") for e in emitter.events]
     assert "found json" in types_seen
@@ -192,13 +193,13 @@ async def test_wikipedia_title_normalization_variants(monkeypatch):
     main = with_fake_session(plan)
     t = main.Tools()
     # underscore variant
-    out1 = await t.wikipedia(pages=["Alan_Turing"], return_html=True)
+    out1 = await t.wikipedia(pages=["Alan_Turing"], return_raw=True)
     assert isinstance(out1, str)
     # percent-encoded diacritics
-    out2 = await t.wikipedia(urls=["https://en.wikipedia.org/wiki/Caf%C3%A9"], return_html=True)
+    out2 = await t.wikipedia(urls=["https://en.wikipedia.org/wiki/Caf%C3%A9"], return_raw=True)
     assert isinstance(out2, str)
     # single title via 'page' argument (covers append(page) path)
-    out3 = await t.wikipedia(page="Alan Turing", return_html=True)
+    out3 = await t.wikipedia(page="Alan Turing", return_raw=True)
     assert isinstance(out3, str)
     await t.close()
 
@@ -394,176 +395,7 @@ async def test_max_body_bytes_cap(monkeypatch):
     main = with_fake_session(plan)
     t = main.Tools()
     t.valves.max_body_bytes = 50
-    out = await t.scrape(url="https://cap.io", return_html=True)
+    out = await t.scrape(url="https://cap.io", return_raw=True)
     assert isinstance(out, str)
     assert out == body[:50]
-    await t.close()
-
-import asyncio
-import importlib
-import json
-import re
-import types
-import pytest
-
-from conftest import FakeSession, Emitter
-
-
-def with_fake_session(plan):
-    import main as main_mod
-
-    async def _fake_get_session(self):
-        sess = FakeSession(plan)
-        # mirror real behavior: cache on instance
-        self._session = sess
-        return sess
-
-    main_mod = importlib.reload(importlib.import_module("main"))
-    # Monkeypatch method directly on class
-    main_mod.Tools._get_session = _fake_get_session
-    return main_mod
-
-
-@pytest.mark.asyncio
-async def test_scrape_returns_html_by_default(monkeypatch):
-    main = with_fake_session({"https://example.com": [(200, "<html><body>Hello</body></html>", None)]})
-    t = main.Tools()
-    out = await t.scrape(url="https://example.com")
-    assert "Hello" in out
-    await t.close()
-
-
-@pytest.mark.asyncio
-async def test_summarize_returns_plaintext(monkeypatch):
-    main = with_fake_session({"https://example.com": [(200, "<html><body>Hello World</body></html>", None)]})
-    t = main.Tools()
-    t.valves.min_summary_size = 0  # allow summarization of small pages
-    out = await t.summarize(url="https://example.com")
-    assert "Hello" in out and "<html>" not in out
-    await t.close()
-
-
-@pytest.mark.asyncio
-async def test_json_and_xml_parsed_duplicate_block(monkeypatch):
-    main = with_fake_session({
-        "https://json.io": [(200, json.dumps({"a": 1}), None)],
-        "https://xml.io": [(200, "<?xml version=\"1.0\"?><root>ok</root>", None)],
-    })
-    t = main.Tools()
-    out_json = await t.scrape(url="https://json.io", return_html=False)
-    assert isinstance(out_json, dict) and out_json["a"] == 1
-    out_xml = await t.scrape(url="https://xml.io", return_html=False)
-    import xml.etree.ElementTree as ET
-    assert isinstance(out_xml, ET.Element) and out_xml.tag == "root"
-    await t.close()
-
-
-@pytest.mark.asyncio
-async def test_min_summary_size_forces_html(monkeypatch):
-    main = with_fake_session({"https://small.io": [(200, "<html>hi</html>", None)]})
-    t = main.Tools()
-    t.valves.min_summary_size = 1000
-    out = await t.scrape(url="https://small.io", return_html=False)
-    assert "<html>hi</html>" in out
-    await t.close()
-
-
-@pytest.mark.asyncio
-async def test_max_summary_size_truncation(monkeypatch):
-    long_text = "word " * 5000
-    main = with_fake_session({"https://big.io": [(200, f"<html><body>{long_text}</body></html>", None)]})
-    t = main.Tools()
-    t.valves.max_summary_size = 500
-    out = await t.summarize(url="https://big.io")
-    assert len(out) <= 500
-    await t.close()
-
-
-@pytest.mark.asyncio
-async def test_emitter_events_and_retries(monkeypatch):
-    class Boom(Exception):
-        pass
-
-    plan = {
-        "https://flaky.io": [
-            (500, "bad", Boom("boom1")),
-            (200, "<html>ok</html>", None),
-        ]
-    }
-    main = with_fake_session(plan)
-    t = main.Tools()
-    t.valves.retries = 2
-    emitter = Emitter()
-    out = await t.scrape(url="https://flaky.io", emitter=emitter)
-    assert "ok" in out
-    # Check key events sequence presence
-    types_seen = [e.get("type") for e in emitter.events]
-    assert "start" in types_seen
-    assert "fetch_attempt" in types_seen
-    assert "fetch_retry" in types_seen
-    assert "fetched" in types_seen
-    assert "done" in types_seen
-    await t.close()
-
-
-@pytest.mark.asyncio
-async def test_final_failure_emits_and_raises(monkeypatch):
-    class Boom(Exception):
-        pass
-
-    plan = {"https://down.io": [(500, "bad", Boom("nope"))] * 3}
-    main = with_fake_session(plan)
-    t = main.Tools()
-    t.valves.retries = 3
-    emitter = Emitter()
-    with pytest.raises(Exception):
-        await t.scrape(url="https://down.io", emitter=emitter)
-    types_seen = [e.get("type") for e in emitter.events]
-    assert "fetch_failed_final" in types_seen
-    await t.close()
-
-
-@pytest.mark.asyncio
-async def test_close_and_session_recreation(monkeypatch):
-    main = with_fake_session({"https://a.io": [(200, "<html>a</html>", None)]})
-    t = main.Tools()
-    s1 = await t._get_session()
-    t.valves.user_agent = "UA-NEW"
-    s2 = await t._get_session()
-    assert s1 is not s2
-    await t.close()
-    assert s2.closed is True
-
-
-@pytest.mark.asyncio
-async def test_wikipedia_helper_and_redirect_bug(monkeypatch):
-    # Wikipedia helper constructs API URL; respond to it
-    api_url = "https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext&format=json&titles=Alan%20Turing"
-    # Accept both space and %20 variants due to simple title-casing in implementation
-    plan = {
-        api_url: [(200, json.dumps({"query": {"pages": {"1": {"extract": "Alan Turing"}}}}), None)]
-    }
-    main = with_fake_session(plan)
-    t = main.Tools()
-    out = await t.wikipedia(pages=["Alan Turing"], return_html=True)
-    assert "Alan Turing" in out or out.strip().startswith("{")
-
-    # Redirect path in scrape should work now (no exception)
-    out2 = await t.scrape(url="https://en.wikipedia.org/wiki/Alan_Turing")
-    assert isinstance(out2, str) and len(out2) > 0
-    await t.close()
-
-
-@pytest.mark.asyncio
-async def test_aliases_delegate(monkeypatch):
-    main = with_fake_session({"https://alias.io": [(200, "<html>x</html>", None)]})
-    t = main.Tools()
-    # All aliases should work
-    assert "x" in await t.get(url="https://alias.io")
-    assert "x" in await t.fetch(url="https://alias.io")
-    assert "x" in await t.pull(url="https://alias.io")
-    assert "x" in await t.download(url="https://alias.io")
-    assert "x" in await t.html(url="https://alias.io")
-    assert "x" in await t.overview(url="https://alias.io")
-    assert "x" in await t.get_summary(url="https://alias.io")
     await t.close()
