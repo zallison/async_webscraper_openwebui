@@ -96,6 +96,7 @@ class Tools:
 
         Outputs: N/A (configuration container)
         """
+
         model_config = {"arbitrary_types_allowed": True}
 
         user_agent: str = Field(
