@@ -33,6 +33,7 @@ import json
 import re
 import urllib.parse
 import random
+import xml.etree.ElementTree as ET
 
 try:
     import html2text
@@ -128,6 +129,10 @@ class Tools:
             None,
             description="If set, only allow requests to these hostnames (exact match).",
         )
+        deny_hosts: Optional[List[str]] = Field(
+            None,
+            description="If set, disallow requests to these hostnames (exact match).",
+        )
 
     def __init__(self):
         """
@@ -148,10 +153,10 @@ class Tools:
         return (v.user_agent, v.retries, v.timeout, v.min_summary_size)
 
     async def __aenter__(self):
-        return self
+        return self  # pragma: nocover
 
     async def __aexit__(self, exc_type, exc, tb):
-        await self.close()
+        await self.close()  # pragma: nocover
 
     async def close(self) -> None:
         """
@@ -206,7 +211,7 @@ class Tools:
                     loop.create_task(self._session.close())
                 else:
                     loop.run_until_complete(self._session.close())
-            except Exception:
+            except Exception:  # pragma: nocover
                 # best-effort; ignore close errors
                 pass
         self._session = None
@@ -334,17 +339,23 @@ class Tools:
         items = list(urls or [])
         if url:
             items.append(url)
-        # Validate allowlist
+        # Validate allow/block lists
         allow = self.valves.allow_hosts
-        if allow:
+        deny = self.valves.deny_hosts
+        if allow or deny:
             for page in items:
                 parsed = urllib.parse.urlparse(page)
-                if (
-                    not parsed.scheme
-                    or not parsed.netloc
-                    or parsed.hostname not in allow
-                ):
-                    raise ValueError(f"Host not allowed: {page}")
+                host = parsed.hostname
+                if not parsed.scheme or not parsed.netloc:
+                    raise ValueError(f"Invalid URL: {page}")
+                # allowlist takes precedence over blocklist
+                if allow:
+                    if host not in allow:
+                        raise ValueError(f"Host not allowed: {page}")
+                    # host in allow: permitted regardless of deny
+                    continue
+                if deny and host in deny:
+                    raise ValueError(f"Host blocked: {page}")
 
         sem = asyncio.Semaphore(max(1, int(self.valves.concurrency) or 1))
 
@@ -369,6 +380,8 @@ class Tools:
         )
         if return_structured:
             return results
+        if len(results) == 1:
+            return results[0]
         return " ".join(map(str, results))
 
     async def _scrape(
@@ -506,17 +519,16 @@ class Tools:
                     emitter,
                     {"type": "found json", "url": url},
                 )
-
-            return_html = True
+            return json_obj
         except (json.JSONDecodeError, ValueError):
             pass
 
-        # Dumb XML Check
+        # Simple XML check via header
         try:
             xml_pattern = r"^\s*<\?xml\s"
             if re.match(xml_pattern, html):
-                """We've found XML"""
-                return_html = True
+                elem = ET.fromstring(html)
+                return elem
         except Exception as e:  # pragma: no cover
             pass
 

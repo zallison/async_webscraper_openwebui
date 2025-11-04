@@ -44,17 +44,18 @@ async def test_summarize_returns_plaintext(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_json_and_xml_passthrough(monkeypatch):
+async def test_json_and_xml_parsed(monkeypatch):
     main = with_fake_session({
         "https://json.io": [(200, json.dumps({"a": 1}), None)],
         "https://xml.io": [(200, "<?xml version=\"1.0\"?><root>ok</root>", None)],
     })
     t = main.Tools()
-    # Even when return_html=False, JSON should be returned raw
     out_json = await t.scrape(url="https://json.io", return_html=False)
-    assert out_json.strip().startswith("{")
+    assert isinstance(out_json, dict) and out_json["a"] == 1
     out_xml = await t.scrape(url="https://xml.io", return_html=False)
-    assert out_xml.strip().startswith("<?xml")
+    # Parsed to Element
+    import xml.etree.ElementTree as ET
+    assert isinstance(out_xml, ET.Element) and out_xml.tag == "root"
     await t.close()
 
 
@@ -174,7 +175,7 @@ async def test_emitter_found_json_event(monkeypatch):
     t = main.Tools()
     emitter = Emitter()
     out = await t.scrape(url="https://json.events", return_html=False, emitter=emitter)
-    assert out.strip().startswith("{")
+    assert isinstance(out, dict) and out["k"] == "v"
     types_seen = [e.get("type") for e in emitter.events]
     assert "found json" in types_seen
     await t.close()
@@ -251,13 +252,18 @@ async def test_redirect_disabled_fetches_raw_html(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_allow_hosts_enforced(monkeypatch):
+async def test_allow_and_deny_hosts_enforced(monkeypatch):
     plan = {"https://banned.com": [(200, "<html>Bad</html>", None)]}
     main = with_fake_session(plan)
     t = main.Tools()
     t.valves.allow_hosts = ["example.com"]
     with pytest.raises(ValueError):
         await t.scrape(url="https://banned.com")
+    # allow should override deny when both contain the host
+    t.valves.allow_hosts = ["banned.com"]
+    t.valves.deny_hosts = ["banned.com"]
+    out = await t.scrape(url="https://banned.com")
+    assert "Bad" in out
 
 
 def test_ensure_synced_close_when_loop_not_running():
@@ -380,6 +386,19 @@ async def test_summary_empty_content_returns_original_html(monkeypatch):
     assert out.startswith("<html>")
     await t.close()
 
+
+@pytest.mark.asyncio
+async def test_max_body_bytes_cap(monkeypatch):
+    body = "<html>" + ("x" * 1000) + "</html>"
+    plan = {"https://cap.io": [(200, body, None)]}
+    main = with_fake_session(plan)
+    t = main.Tools()
+    t.valves.max_body_bytes = 50
+    out = await t.scrape(url="https://cap.io", return_html=True)
+    assert isinstance(out, str)
+    assert out == body[:50]
+    await t.close()
+
 import asyncio
 import importlib
 import json
@@ -425,17 +444,17 @@ async def test_summarize_returns_plaintext(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_json_and_xml_passthrough(monkeypatch):
+async def test_json_and_xml_parsed_duplicate_block(monkeypatch):
     main = with_fake_session({
         "https://json.io": [(200, json.dumps({"a": 1}), None)],
         "https://xml.io": [(200, "<?xml version=\"1.0\"?><root>ok</root>", None)],
     })
     t = main.Tools()
-    # Even when return_html=False, JSON should be returned raw
     out_json = await t.scrape(url="https://json.io", return_html=False)
-    assert out_json.strip().startswith("{")
+    assert isinstance(out_json, dict) and out_json["a"] == 1
     out_xml = await t.scrape(url="https://xml.io", return_html=False)
-    assert out_xml.strip().startswith("<?xml")
+    import xml.etree.ElementTree as ET
+    assert isinstance(out_xml, ET.Element) and out_xml.tag == "root"
     await t.close()
 
 
