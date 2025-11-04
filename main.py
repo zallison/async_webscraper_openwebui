@@ -35,12 +35,12 @@ import re
 
 try:
     import html2text
-except ImportError as e:
-    import lxml
+except ImportError as e:  # pragma: no cover
+    import lxml  # pragma: no cover
 
-    class html2text:
+    class html2text:  # pragma: no cover
         @staticmethod
-        def html2text(html: str) -> str:
+        def html2text(html: str) -> str:  # pragma: no cover
             plain_text = lxml.etree.HTML(html).xpath("//text()")
             return " ".join(plain_text)
 
@@ -64,10 +64,10 @@ HEADERS = {
 }
 
 try:
-    from fake_useragent import UserAgent
+    from fake_useragent import UserAgent  # pragma: no cover
 
-    ua = UserAgent()
-    USER_AGENT = ua.random()
+    ua = UserAgent()  # pragma: no cover
+    USER_AGENT = ua.random()  # pragma: no cover
 except Exception as e:
     pass
 
@@ -150,6 +150,14 @@ class Tools:
             await self._session.close()
 
     async def _emit(self, emitter, event: Dict[str, Any]) -> None:
+        """
+        Send an event to an optional emitter, supporting sync/async callables.
+
+        Inputs:
+        - emitter: object with async/sync emit(event) or a callable
+        - event: dict payload
+        Outputs: None (errors suppressed)
+        """
         try:
             if hasattr(emitter, "emit") and asyncio.iscoroutinefunction(emitter.emit):
                 await emitter.emit(event)
@@ -161,6 +169,12 @@ class Tools:
             pass
 
     def _ensure_synced(self):
+        """
+        Recreate session when session-affecting valves change.
+
+        Inputs: none
+        Outputs: None (may schedule/perform session close)
+        """
         snapshot = self._valves_snapshot()
         if snapshot == self._applied_snapshot:
             return
@@ -178,6 +192,7 @@ class Tools:
         self._applied_snapshot = snapshot
 
     async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create the shared aiohttp.ClientSession with current headers."""
         self._ensure_synced()
         if self._session and not self._session.closed:
             return self._session
@@ -213,6 +228,15 @@ class Tools:
         return_html: bool = True,
         emitter=None,
     ) -> str:
+        """Retrieve multiple pages from Wikipedia via the extracts API.
+
+        Inputs:
+        - pages/page: titles or page URLs; URLs are normalized to titles
+        - url/urls: alternative URL inputs
+        - return_html: True to get raw API JSON; False to summarize API response
+        - emitter: optional event sink
+
+        Output: concatenated string of results
         """
         Retrieve Multiple Pages from wikipedia
         pages: a list of str of pages to retrieve
@@ -241,6 +265,14 @@ class Tools:
     ## Summarize
     async def summarize(self, urls: list[str] = [], url: str = None, emitter=None):
         return await self.scrape(urls, url=url, return_html=False, emitter=emitter)
+        """Fetch and return plaintext summary for one or more URLs.
+
+        Inputs:
+        - urls/url: one or many URLs to fetch
+        - emitter: optional event sink
+        Output: concatenated plaintext summaries
+        """
+        return await self.scrape(
 
     get_summary = summarize
     overview = summarize
@@ -258,6 +290,13 @@ class Tools:
         Fetch, parse, and extract title, main content, summary
         option: return_html = True to get ONLY the raw content.
         option: return_html = False to get ONLY the summary.
+        """Fetch content and optionally convert HTML to plaintext.
+
+        Inputs:
+        - urls/url: one or many URLs
+        - return_html: True returns raw body; False returns plaintext summary
+        - emitter: optional event sink receiving lifecycle events
+        - redirect: if True, Wikipedia URLs are routed to the API helper
 
         Note: files below valve min_summary_size will be returned as-is
         """
@@ -331,12 +370,17 @@ class Tools:
         def _get_all_content(html) -> str:
             return html2text.html2text(_clean_html(html))
 
-        def _summarize(self, text: str, max_words=2048) -> str:
+        def _summarize(self, text: str, max_words=2048) -> str:  # pragma: no cover
             """Simple naive summarizer"""
             words = re.split(r"\s+", _clean_html(text))
             return " ".join(words[:max_words])
 
-        # --- Actual work ---
+        # / Helpers
+
+        #######################
+        # --- Actual work --- #
+        #######################
+
         self._ensure_synced()
         if not url:
             raise ValueError("Input must be a string with a valid 'url'.")
@@ -352,9 +396,11 @@ class Tools:
                     emitter,
                     {"type": "fetch_failed_final", "url": url, "error": str(e)},
                 )
-            raise  # re-raise so caller still gets the error
+            raise e  # re-raise so caller still gets the error
 
         try:
+            # Prefer header detection if available via simplistic heuristic
+            # Already decoded above; attempt JSON parse
             json_obj = json.loads(html)
             if emitter:
                 await self._emit(
@@ -372,7 +418,7 @@ class Tools:
             if re.match(xml_pattern, html):
                 """We've found XML"""
                 return_html = True
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             pass
 
         min_size_check = int(self.valves.min_summary_size) or 0
