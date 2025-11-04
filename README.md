@@ -31,7 +31,8 @@ Data of type XML or JSON will be returned unmodified.
 ## Features:
 - Runs locally
 - Uses standard, well known libraries
-- Detects JSON and XML and returns it directly
+- Detects JSON and XML and returns it directly (now also checks Content-Type and charset headers)
+- Optional structured results and concurrency control for multi-URL scraping
 - No API keys or subscriptions.
 - No other services required
 - Plenty of aliases to help even dumb models find the tools
@@ -47,6 +48,13 @@ Data of type XML or JSON will be returned unmodified.
 - explain the contents of https://www.cs.utexas.edu/~mitra/csFall2010/cs329/lectures/xml/xslplanes.1.xml.txt
 - https://openwebui.com/robots.txt is scraping allowed?
 - get https://www.web-scraping.dev/product/2 and give me a summary
+
+### New options (concise)
+- Concurrency: set `Tools().valves.concurrency = 5` to bound parallel fetches.
+- Structured results: `await t.scrape(urls=[...], return_structured=True)` returns `[{'url': ..., 'content': ...}, ...]`.
+- Host allowlist: `t.valves.allow_hosts = ['example.com']` denies non-listed hosts.
+- Wikipedia language: `t.valves.wiki_lang = 'de'` for German extracts.
+- Body cap: `t.valves.max_body_bytes = 200_000` truncates large responses.
 
 ------
 ## Valves:
