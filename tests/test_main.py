@@ -203,7 +203,7 @@ async def test_wikipedia_title_normalization_variants(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_multiple_urls_concatenation(monkeypatch):
+async def test_multiple_urls_concatenation_and_structured(monkeypatch):
     plan = {
         "https://a.com": [(200, "<html>A</html>", None)],
         "https://b.com": [(200, "<html>B</html>", None)],
@@ -211,7 +211,9 @@ async def test_multiple_urls_concatenation(monkeypatch):
     main = with_fake_session(plan)
     t = main.Tools()
     out = await t.scrape(urls=["https://a.com", "https://b.com"]) 
-    assert "A" in out and "B" in out
+    assert ("A" in out and "B" in out) and out.index("A") < out.index("B")
+    structured = await t.scrape(urls=["https://a.com", "https://b.com"], return_structured=True)
+    assert isinstance(structured, list) and structured[0]["url"].endswith("a.com")
     await t.close()
 
 
@@ -223,6 +225,7 @@ async def test_session_timeout_applied():
     t.valves.timeout = 2
     s = await t._get_session()
     assert isinstance(s.timeout, aiohttp.ClientTimeout)
+    # aiohttp may store as float
     assert int(s.timeout.total) == 2
     await t.close()
 
@@ -245,6 +248,16 @@ async def test_redirect_disabled_fetches_raw_html(monkeypatch):
     out = await t.scrape(url=wiki_url, redirect=False)
     assert "Wiki Page Raw" in out
     await t.close()
+
+
+@pytest.mark.asyncio
+async def test_allow_hosts_enforced(monkeypatch):
+    plan = {"https://banned.com": [(200, "<html>Bad</html>", None)]}
+    main = with_fake_session(plan)
+    t = main.Tools()
+    t.valves.allow_hosts = ["example.com"]
+    with pytest.raises(ValueError):
+        await t.scrape(url="https://banned.com")
 
 
 def test_ensure_synced_close_when_loop_not_running():

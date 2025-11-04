@@ -17,11 +17,14 @@ sys.modules.setdefault("html2text", mod)
 
 
 class FakeResponse:
-    def __init__(self, url: str, status: int, text: str, raise_for_status_exc: Optional[Exception] = None):
+    def __init__(self, url: str, status: int, text: str, raise_for_status_exc: Optional[Exception] = None, headers: Optional[Dict[str, str]] = None):
         self.url = url
         self.status = status
         self._text = text
         self._exc = raise_for_status_exc
+        self.headers = headers or {"Content-Type": "text/html; charset=utf-8"}
+        self.history = []
+        self.request_info = types.SimpleNamespace(real_url=url)
 
     async def __aenter__(self):
         return self
@@ -35,6 +38,9 @@ class FakeResponse:
 
     async def text(self):
         return self._text
+
+    async def read(self):
+        return self._text.encode("utf-8")
 
 
 class FakeSession:
