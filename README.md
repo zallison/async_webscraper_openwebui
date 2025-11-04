@@ -1,10 +1,21 @@
 ## About
 
-Scrape a web page using requests, and get either the html or a summary using html2text or lxml.  With support for wikipedia api, pages for wikipedia will be auto-rerouted to the API for much better results.
+Scrape a web page using requests, and get either the html or a summary using html2text or lxml.  With support for wikipedia api, pages for wikipedia will be auto-rerouted to the API for much better results. Can scrape multiple urls.
 
 Data of type XML or JSON will be returned unmodified.
 
-## Notes:
+-----
+## Features:
+- Runs locally
+- Uses standard, well known libraries
+- Detects JSON and XML and returns it directly
+- No API keys or subscriptions.
+- No other services required
+- Plenty of aliases to help even dumb models find the tools
+- Best of all: it actually works!
+
+----
+### Notes:
 - Your model may not like "scrape" so try "fetch", "get", or others if blocked.
 - Sometimes blocked by "anti-scrape" mechanism
 - Try the "Fine Tuning" section for an example system instruction.
@@ -27,18 +38,6 @@ Data of type XML or JSON will be returned unmodified.
 ### New in v0.1.1:
 - Automatically detect JSON and XML data and return it without parsing
 
------
-## Features:
-- Runs locally
-- Uses standard, well known libraries
-- Detects JSON and XML and returns it directly (now also checks Content-Type and charset headers)
-- Optional structured results and concurrency control for multi-URL scraping
-- No API keys or subscriptions.
-- No other services required
-- Plenty of aliases to help even dumb models find the tools
-- Best of all: it actually works!
-- LRU Cache for holding each page so that repeated queries don't cause more network requests.
-  Note: Depends on model and pipeline
 
 -----
 ## Example:
@@ -48,13 +47,7 @@ Data of type XML or JSON will be returned unmodified.
 - explain the contents of https://www.cs.utexas.edu/~mitra/csFall2010/cs329/lectures/xml/xslplanes.1.xml.txt
 - https://openwebui.com/robots.txt is scraping allowed?
 - get https://www.web-scraping.dev/product/2 and give me a summary
-
-### New options (concise)
-- Concurrency: set `Tools().valves.concurrency = 5` to bound parallel fetches.
-- Structured results: `await t.scrape(urls=[...], return_structured=True)` returns `[{'url': ..., 'content': ...}, ...]`.
-- Host allowlist: `t.valves.allow_hosts = ['example.com']` denies non-listed hosts.
-- Wikipedia language: `t.valves.wiki_lang = 'de'` for German extracts.
-- Body cap: `t.valves.max_body_bytes = 200_000` truncates large responses.
+- get the wikipedia page for "Beer" and explain it to me
 
 ------
 ## Valves:
@@ -83,4 +76,3 @@ The Rules:
 
 Feedback more than welcome.
 author: openwebui@zackallison.com
-
