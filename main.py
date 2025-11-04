@@ -26,12 +26,13 @@ The Rules:
 """
 
 import asyncio
-import time
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List, Callable
 import aiohttp
 from pydantic import BaseModel, Field
 import json
 import re
+import urllib.parse
+import random
 
 try:
     import html2text
