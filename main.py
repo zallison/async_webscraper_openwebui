@@ -20,7 +20,8 @@ The summary is much shorter and useful for quick overviews, the html is longer a
 The Rules:
 
 - Do not make anything up if the scrape fails.
-- When calling this tools make sure to send only properly formatted complete urls.
+- When calling these scrape tools make sure to send only properly formatted complete urls.
+- When calling the wikipedia tools pass only the name of the page you want, not the url.
 - As we’re only making a single request per user input, the standards of robots.txt allow us to fetch from every site that doesn’t explicitly disallow it.
 """
 
@@ -72,9 +73,28 @@ except Exception as e:
 
 
 class Tools:
+    """
+    High-level async web scraping utility.
+
+    Inputs/Outputs summary:
+    - Public methods return str content (raw HTML/JSON/XML or plaintext summary).
+    - Wikipedia helpers return concatenated page results as str.
+    """
+
     VERSION = "0.1.4"
 
     class Valves(BaseModel):
+        """Runtime tuning knobs.
+
+        Inputs:
+        - user_agent: header value for HTTP requests
+        - retries: number of attempts for fetch with backoff
+        - timeout: per-request timeout seconds
+        - min_summary_size: below this raw HTML is returned
+        - max_summary_size: cap for plaintext length
+
+        Outputs: N/A (configuration container)
+        """
         model_config = {"arbitrary_types_allowed": True}
 
         user_agent: str = Field(
@@ -86,17 +106,37 @@ class Tools:
         )
         timeout: int = Field(10, description="Request timeout in seconds.")
         min_summary_size: int = Field(
-            1024,  # Set appropriate for your context length.
-            description="How large a response do we need before we stop just returning html. Increase this value according to your context length",
+            1024,
+            description="Minimum response size to consider summarizing.",
         )
         max_summary_size: int = Field(
             1024 * 10, description="Cut a summary off after this many characters."
         )
+        max_body_bytes: Optional[int] = Field(
+            None,
+            description="If set, cap the fetched response body to this many bytes.",
+        )
+        concurrency: int = Field(
+            5, description="Max concurrent requests when passing multiple URLs."
+        )
+        wiki_lang: str = Field(
+            "en", description="Wikipedia language code for API requests."
+        )
+        allow_hosts: Optional[List[str]] = Field(
+            None,
+            description="If set, only allow requests to these hostnames (exact match).",
+        )
 
     def __init__(self):
+        """
+        Initialize with default valves and prepare session management.
+
+        Inputs: none
+        Outputs: Tools instance with lazy ClientSession creation
+        """
         self.valves = self.Valves()
         self._session: Optional[aiohttp.ClientSession] = None
-        self._applied_snapshot = None
+        self._applied_snapshot: Optional[tuple] = None
         self._ensure_synced()
 
     # ------------------------ Internal Utilities ------------------------
