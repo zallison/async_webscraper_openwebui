@@ -1,4 +1,4 @@
-## About
+### About
 
 Scrape a web page using requests, and get either the html or a summary using html2text or lxml.  With support for wikipedia api, pages for wikipedia will be auto-rerouted to the API for much better results. Can scrape multiple urls.
 
@@ -42,7 +42,7 @@ Data of type XML or JSON will be returned unmodified.
 -----
 ## Example:
 
-- scrape https://www.reddit.com/.rss and explain the results
+- scrape https://www.reddit.com/r/openwebui.rss and explain the results
 - fetch the page at https://webscraper.io/test-sites/e-commerce/allinone and explain the html structure
 - explain the contents of https://www.cs.utexas.edu/~mitra/csFall2010/cs329/lectures/xml/xslplanes.1.xml.txt
 - https://openwebui.com/robots.txt is scraping allowed?

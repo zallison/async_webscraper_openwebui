@@ -82,7 +82,7 @@ class Tools:
     - Wikipedia helpers return concatenated page results as str.
     """
 
-    VERSION = "0.1.4"
+    VERSION = "0.1.5"
 
     class Valves(BaseModel):
         """Runtime tuning knobs.
@@ -369,7 +369,7 @@ class Tools:
         )
         if return_structured:
             return results
-        return "".join(map(str, results))
+        return " ".join(map(str, results))
 
     async def _scrape(
         self, url: str, return_html: bool = True, emitter=None, redirect=True
