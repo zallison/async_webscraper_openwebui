@@ -490,7 +490,9 @@ class Tools:
 
         def _clean_html(html):
             flags = re.S | re.M | re.I
+            # Wikipedia page
             html = re.sub(r".*Contents.move to sidebar.hide", "", html, flags=flags)
+            # Scripts and headers
             html = re.sub(r"<head>.*</head>", "", html, flags=flags)
             html = re.sub(r"<script>.*</script>", "", html, flags=flags)
             return html
