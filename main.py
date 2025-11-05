@@ -69,6 +69,7 @@ HEADERS = {
 
 try:
     from fake_useragent import UserAgent
+
     ua = UserAgent()
     USER_AGENT = ua.random()
 except Exception as e:
@@ -435,7 +436,7 @@ class Tools:
                     loop.create_task(self._session.close())
                 else:
                     loop.run_until_complete(self._session.close())
-            except Exception:
+            except Exception:  # pragma: no cover
                 # best-effort; ignore close errors
                 pass
         self._session = None
@@ -781,7 +782,7 @@ class Tools:
                     # Return parsed XML element when plaintext is requested
                     return xml_elem
                     # Otherwise return_raw = True means return as-is
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             pass
 
         min_size_check = int(self.valves.min_summary_size) or 0
