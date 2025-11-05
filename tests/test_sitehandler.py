@@ -71,7 +71,9 @@ async def test_wikipedia_handler_parse_title_from_url():
     assert title == "Café"
 
     # URL with mixed case
-    title = handler.parse_title_from_url("https://en.wikipedia.org/wiki/python_programming")
+    title = handler.parse_title_from_url(
+        "https://en.wikipedia.org/wiki/python_programming"
+    )
     assert title == "Python Programming"
 
     # Non-Wikipedia URL (fallback)
@@ -87,7 +89,15 @@ async def test_wikipedia_handler_fetch_extract():
         api_url: [
             (
                 200,
-                json.dumps({"query": {"pages": {"1": {"extract": "Python is a programming language."}}}}),
+                json.dumps(
+                    {
+                        "query": {
+                            "pages": {
+                                "1": {"extract": "Python is a programming language."}
+                            }
+                        }
+                    }
+                ),
                 None,
             )
         ]
@@ -97,7 +107,9 @@ async def test_wikipedia_handler_fetch_extract():
     handler = main.WikipediaHandler()
 
     result = await handler._fetch_extract(t, "Python")
-    assert "Python is a programming language" in result or result.strip().startswith("{")
+    assert "Python is a programming language" in result or result.strip().startswith(
+        "{"
+    )
     await t.close()
 
 

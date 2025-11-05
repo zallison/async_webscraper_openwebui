@@ -13,7 +13,10 @@ async def test_can_handle_executes_lines_and_branches():
     # True branch
     assert handler.can_handle("https://sub.example.com/path") is True
     # Exercise helper directly
-    assert main_mod.SiteHandler._hostname_from_url("https://sub.example.com/path") == "sub.example.com"
+    assert (
+        main_mod.SiteHandler._hostname_from_url("https://sub.example.com/path")
+        == "sub.example.com"
+    )
 
 
 @pytest.mark.asyncio
@@ -27,7 +30,10 @@ async def test_sitehandler_handle_raises_not_implemented():
 async def test_parse_title_from_url_both_paths():
     h = main_mod.WikipediaHandler()
     # wiki URL path
-    assert h.parse_title_from_url("https://en.wikipedia.org/wiki/Alan_Turing") == "Alan Turing"
+    assert (
+        h.parse_title_from_url("https://en.wikipedia.org/wiki/Alan_Turing")
+        == "Alan Turing"
+    )
     # non-wiki path
     assert h.parse_title_from_url("python") == "Python"
 
@@ -39,7 +45,9 @@ async def test__fetch_extract_builds_expected_api_url(monkeypatch):
 
     captured = {}
 
-    async def fake__scrape(self, url: str, return_raw: bool = True, emitter=None, redirect=True):
+    async def fake__scrape(
+        self, url: str, return_raw: bool = True, emitter=None, redirect=True
+    ):
         captured["url"] = url
         return "ok"
 
@@ -47,7 +55,10 @@ async def test__fetch_extract_builds_expected_api_url(monkeypatch):
 
     # Also test helper builder directly
     built = h.build_api_url("Python", "en")
-    assert built.startswith("https://en.wikipedia.org/w/api.php?") and "titles=Python" in built
+    assert (
+        built.startswith("https://en.wikipedia.org/w/api.php?")
+        and "titles=Python" in built
+    )
 
     await h._fetch_extract(t, "Python")
     assert captured["url"].startswith("https://en.wikipedia.org/w/api.php?")
@@ -62,7 +73,9 @@ async def test_fetch_pages_html_and_extract_paths(monkeypatch):
 
     seen_urls = []
 
-    async def fake__scrape(self, url: str, return_raw: bool = True, emitter=None, redirect=True):
+    async def fake__scrape(
+        self, url: str, return_raw: bool = True, emitter=None, redirect=True
+    ):
         seen_urls.append(url)
         return "ok"
 
@@ -71,8 +84,14 @@ async def test_fetch_pages_html_and_extract_paths(monkeypatch):
     # return_html=True -> fetch HTML for both a full url and a built title
     # Ensure builder used for the title case
     assert h.build_page_url("Ruby", "en").endswith("/wiki/Ruby")
-    out_html = await h.fetch_pages(t, ["https://en.wikipedia.org/wiki/Python", "Ruby"], return_html=True)
-    assert out_html == "okok" and any("/wiki/Python" in u for u in seen_urls) and any("/wiki/Ruby" in u for u in seen_urls)
+    out_html = await h.fetch_pages(
+        t, ["https://en.wikipedia.org/wiki/Python", "Ruby"], return_html=True
+    )
+    assert (
+        out_html == "okok"
+        and any("/wiki/Python" in u for u in seen_urls)
+        and any("/wiki/Ruby" in u for u in seen_urls)
+    )
 
     seen_urls.clear()
     # return_html=False -> use API extract path

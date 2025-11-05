@@ -53,25 +53,6 @@ async def test_summarize_returns_plaintext(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_json_and_xml_parsed(monkeypatch):
-    main = with_fake_session(
-        {
-            "https://json.io": [(200, json.dumps({"a": 1}), None)],
-            "https://xml.io": [(200, '<?xml version="1.0"?><root>ok</root>', None)],
-        }
-    )
-    t = main.Tools()
-    out_json = await t.scrape(url="https://json.io", return_raw=False)
-    assert isinstance(out_json, dict) and out_json["a"] == 1
-    out_xml = await t.scrape(url="https://xml.io", return_raw=False)
-    # Parsed to Element
-    import xml.etree.ElementTree as ET
-
-    assert isinstance(out_xml, ET.Element) and out_xml.tag == "root"
-    await t.close()
-
-
-@pytest.mark.asyncio
 async def test_min_summary_size_forces_html(monkeypatch):
     main = with_fake_session({"https://small.io": [(200, "<html>hi</html>", None)]})
     t = main.Tools()

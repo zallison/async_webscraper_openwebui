@@ -40,7 +40,9 @@ async def test_wikipedia_fetch_pages_mixed_inputs_hits_both_branches():
     }
     main = with_fake_session(plan)
     t = main.Tools()
-    out = await main.WikipediaHandler().fetch_pages(t, [wiki_url, "Ruby"], return_html=True)
+    out = await main.WikipediaHandler().fetch_pages(
+        t, [wiki_url, "Ruby"], return_html=True
+    )
     assert "Python HTML" in out and "Ruby HTML" in out
     await t.close()
 
