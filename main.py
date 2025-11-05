@@ -87,7 +87,7 @@ class SiteHandler:
             name = "mysite"
             domains = (".example.com",)
 
-            async def handle(self, tools, url, return_html=None):
+            async def handle(self, tools, url, return_raw=None):
                 # custom processing
                 return "..."
     """
@@ -117,19 +117,19 @@ class SiteHandler:
         return any(hostname.endswith(domain) for domain in self.domains)
 
     async def handle(
-        self, tools: "Tools", url: str, return_html: Optional[bool] = None
+        self, tools: "Tools", url: str, return_raw: Optional[bool] = None
     ) -> str:
         """Process a URL using custom logic.
 
         Inputs:
         - tools: Tools instance providing session, retries, emitter, valves
         - url: target URL
-        - return_html: if True, return raw HTML; if False, return plaintext; None defaults to handler behavior
+        - return_raw: if True, return raw HTML; if False, return plaintext; None defaults to handler behavior
         Outputs: str content (HTML or plaintext)
 
         Example usage:
             handler = get_handler_for("https://example.com")
-            result = await handler.handle(tools_instance, url, return_html=True)
+            result = await handler.handle(tools_instance, url, return_raw=True)
         """
         raise NotImplementedError("Subclasses must implement handle()")
 
@@ -142,7 +142,7 @@ class WikipediaHandler(SiteHandler):
 
     Example usage:
         handler = WikipediaHandler()
-        extract = await handler.handle(tools, "https://en.wikipedia.org/wiki/Python", return_html=False)
+        extract = await handler.handle(tools, "https://en.wikipedia.org/wiki/Python", return_raw=False)
     """
 
     name = "wikipedia"
@@ -225,7 +225,7 @@ class WikipediaHandler(SiteHandler):
 
         Example usage:
             handler = WikipediaHandler()
-            content = await handler.fetch_pages(tools, ["Python", "Ruby"], return_html=False)
+            content = await handler.fetch_pages(tools, ["Python", "Ruby"], return_raw=False)
         """
         retval = ""
         for page in pages:
@@ -355,7 +355,8 @@ class Tools:
         self.valves = self.Valves()
         self._session: Optional[aiohttp.ClientSession] = None
         self._applied_snapshot: Optional[tuple] = None
-        self._handlers: List[SiteHandler] = []
+        # Use a generic type to avoid pydantic/tooling schema generation on custom classes
+        self._handlers: List[object] = []
         self._ensure_synced()
         # Register default handlers
         self.register_handler(WikipediaHandler())
@@ -455,7 +456,7 @@ class Tools:
         self._session = aiohttp.ClientSession(headers=headers, timeout=timeout)
         return self._session
 
-    def register_handler(self, handler: SiteHandler) -> None:
+    def register_handler(self, handler: object) -> None:
         """Register a custom site handler.
 
         Inputs:
@@ -468,7 +469,7 @@ class Tools:
         """
         self._handlers.append(handler)
 
-    def get_handler_for(self, url: str) -> Optional[SiteHandler]:
+    def get_handler_for(self, url: str) -> Optional[object]:
         """Find registered handler for a URL.
 
         Inputs:
