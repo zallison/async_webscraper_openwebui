@@ -4,6 +4,8 @@ Scrape a web page using requests, and get either the html or a summary using htm
 
 Data of type XML or JSON will be parsed and returned as Python data structures (JSON -> dict/list; XML -> xml.etree.ElementTree.Element).
 
+**Site Handlers**: The library now supports custom domain-specific handlers via the `SiteHandler` base class. Wikipedia is implemented as a handler that uses the MediaWiki API. You can register custom handlers for other sites. Public APIs remain unchanged.
+
 -----
 ## Features:
 - Runs locally
@@ -21,6 +23,12 @@ Data of type XML or JSON will be parsed and returned as Python data structures (
 - Try the "Fine Tuning" section for an example system instruction.
 
 -----
+### New in v.0.2.0:
+- Introduced SiteHandler base class for custom domain-specific processing
+- Migrated Wikipedia logic into WikipediaHandler
+- Fixed Wikipedia URL redirect bug in scrape()
+- All public APIs remain unchanged
+
 ### New in v.0.1.4:
 - Scrape function now allow for multiple urls to be given
 - Bugfixes, better aliases
@@ -74,6 +82,30 @@ The Rules:
 - When calling this tools make sure to send only properly formatted complete urls.
 - As we’re only making a single request per user input, the standards of robots.txt allow us to fetch from every site that doesn’t explicitly disallow it.
 
+```
+
+------
+
+## Custom Site Handlers
+
+You can create custom handlers for specific domains:
+
+```python
+from main import Tools, SiteHandler
+
+class MyHandler(SiteHandler):
+    name = "mysite"
+    domains = (".example.com",)
+
+    async def handle(self, tools, url, return_html=None):
+        # Custom processing for example.com
+        return "custom result"
+
+tools = Tools()
+tools.register_handler(MyHandler())
+
+# Will use MyHandler for example.com URLs
+result = await tools.scrape("https://www.example.com/page")
 ```
 
 ------
