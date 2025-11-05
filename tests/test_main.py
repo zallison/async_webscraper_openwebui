@@ -158,6 +158,7 @@ async def test_close_and_session_recreation(monkeypatch):
 async def test_wikipedia_helper_and_redirect_bug(monkeypatch):
     # Wikipedia helper constructs API URL; respond to it
     api_url = "https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext&format=json&titles=Alan%20Turing"
+    wiki_page_url = "https://en.wikipedia.org/wiki/Alan_Turing"
     plan = {
         api_url: [
             (
@@ -165,7 +166,8 @@ async def test_wikipedia_helper_and_redirect_bug(monkeypatch):
                 json.dumps({"query": {"pages": {"1": {"extract": "Alan Turing"}}}}),
                 None,
             )
-        ]
+        ],
+        wiki_page_url: [(200, "<html>Alan Turing Wikipedia Page</html>", None)],
     }
     main = with_fake_session(plan)
     t = main.Tools()
@@ -173,6 +175,7 @@ async def test_wikipedia_helper_and_redirect_bug(monkeypatch):
     assert "Alan Turing" in out or out.strip().startswith("{")
 
     # Redirect path in scrape should work now (no exception)
+    # When redirect=True and return_raw=True, handler returns HTML
     out2 = await t.scrape(url="https://en.wikipedia.org/wiki/Alan_Turing")
     assert isinstance(out2, str) and len(out2) > 0
     await t.close()
