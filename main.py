@@ -327,7 +327,6 @@ class Tools:
         """
         return await self.scrape(urls or [], url=url, return_raw=False, emitter=emitter)
 
-
     get_summary = summarize
     overview = summarize
 
