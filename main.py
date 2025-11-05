@@ -43,7 +43,7 @@ except ImportError as e:  # pragma: no cover
     class html2text:  # pragma: no cover
         @staticmethod
         def html2text(html: str) -> str:  # pragma: no cover
-            plain_text = lxml.etree.HTML(html).xpath("//text()")
+            plain_text = lxml.etree.HTML(html.encode("utf-8")).xpath("//text()")
             return " ".join(plain_text)
 
 
@@ -548,12 +548,14 @@ class Tools:
         # Simple XML check via header
         try:
             xml_pattern = r"^\s*<\?xml\s"
-            xml_elem = ET.fromstring(page_data) if re.match(xml_pattern, page_data) else None
+            xml_elem = (
+                ET.fromstring(page_data) if re.match(xml_pattern, page_data) else None
+            )
             if xml_elem is not None:
                 if not return_raw:
                     # Return parsed XML element when plaintext is requested
                     return xml_elem
-                # Otherwise return_raw = True means return as-is
+                    # Otherwise return_raw = True means return as-is
         except Exception as e:  # pragma: no cover
             pass
 
