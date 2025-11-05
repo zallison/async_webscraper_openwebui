@@ -1,7 +1,9 @@
 """
 title: Async Webscraper
 author: Zack Allison <zack@zackallison.com>
-version: 0.1.4
+author_url: https://github.com/zallison
+git_url: https://github.com/zallison/async_webscraper_openwebui
+version: 0.2.0
 """
 
 """
@@ -20,17 +22,20 @@ The summary is much shorter and useful for quick overviews, the html is longer a
 The Rules:
 
 - Do not make anything up if the scrape fails.
-- When calling this tools make sure to send only properly formatted complete urls.
+- When calling these scrape tools make sure to send only properly formatted complete urls.
+- When calling the wikipedia tools pass only the name of the page you want, not the url.
 - As we’re only making a single request per user input, the standards of robots.txt allow us to fetch from every site that doesn’t explicitly disallow it.
 """
 
 import asyncio
-import time
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List
 import aiohttp
 from pydantic import BaseModel, Field
 import json
 import re
+import urllib.parse
+import random
+import xml.etree.ElementTree as ET
 
 try:
     import html2text
@@ -40,7 +45,7 @@ except ImportError as e:
     class html2text:
         @staticmethod
         def html2text(html: str) -> str:
-            plain_text = lxml.etree.HTML(html).xpath("//text()")
+            plain_text = lxml.etree.HTML(html.encode("utf-8")).xpath("//text()")
             return " ".join(plain_text)
 
 
@@ -71,10 +76,252 @@ except Exception as e:
     pass
 
 
+class SiteHandler:
+    """Base class for custom domain-specific processing.
+
+    Inputs: Subclasses override name, domains, and async handle() method.
+    Outputs: Provides domain routing and processing delegation.
+
+    Example usage:
+        class MyHandler(SiteHandler):
+            name = "mysite"
+            domains = (".example.com",)
+
+            async def handle(self, tools, url, return_raw=None):
+                # custom processing
+                return "..."
+    """
+
+    name: str = "base"
+    domains: tuple = ()
+
+    @staticmethod
+    def _hostname_from_url(url: str) -> str:
+        """Extract hostname from a URL.
+
+        Inputs:
+        - url: input URL string (possibly malformed)
+        Outputs: hostname string or empty string when unavailable
+        """
+        parsed = urllib.parse.urlparse(url)
+        return parsed.hostname or ""
+
+    def can_handle(self, url: str) -> bool:
+        """Check if this handler can process a given URL.
+
+        Inputs:
+        - url: target URL string
+        Outputs: True if URL matches any of this handler's domains
+        """
+        hostname = self._hostname_from_url(url)
+        return any(hostname.endswith(domain) for domain in self.domains)
+
+    async def handle(
+        self, tools: "Tools", url: str, return_raw: Optional[bool] = None
+    ) -> str:
+        """Process a URL using custom logic.
+
+        Inputs:
+        - tools: Tools instance providing session, retries, emitter, valves
+        - url: target URL
+        - return_raw: if True, return raw HTML; if False, return plaintext; None defaults to handler behavior
+        Outputs: str content (HTML or plaintext)
+
+        Example usage:
+            handler = get_handler_for("https://example.com")
+            result = await handler.handle(tools_instance, url, return_raw=True)
+        """
+        raise NotImplementedError("Subclasses must implement handle()")
+
+
+class WikipediaHandler(SiteHandler):
+    """Handler for Wikipedia URLs using MediaWiki API.
+
+    Inputs: URLs with .wikipedia.org domain
+    Outputs: Page extracts (plaintext) or raw HTML
+
+    Example usage:
+        handler = WikipediaHandler()
+        extract = await handler.handle(tools, "https://en.wikipedia.org/wiki/Python", return_raw=False)
+    """
+
+    name = "wikipedia"
+    domains = (".wikipedia.org",)
+
+    def can_handle(self, url: str) -> bool:
+        """Check if this handler can process a given URL.
+
+        Inputs:
+        - url: target URL string
+        Outputs: True if URL matches any of this handler's domains
+        """
+        hostname = self._hostname_from_url(url)
+        return (
+            any(hostname.endswith(domain) for domain in self.domains)
+            and not "api.php" in url
+        )
+
+    @staticmethod
+    def parse_title_from_url(url: str) -> str:
+        """Extract Wikipedia page title from URL.
+
+        Inputs:
+        - url: Wikipedia page URL like https://en.wikipedia.org/wiki/Alan_Turing
+        Outputs: Title-cased page title string
+
+        Example usage:
+            title = WikipediaHandler.parse_title_from_url("https://en.wikipedia.org/wiki/Alan_Turing")
+            # returns "Alan Turing"
+        """
+        if "wikipedia" in url and "api" not in url:
+            # Extract last path segment as title
+            page = url.rsplit("/", 1)[-1]
+            page = urllib.parse.unquote(page)
+            page = page.replace("_", " ")
+            return page.title()
+        return url.title()
+
+    def build_api_url(self, title: str, lang: Optional[str] = None) -> str:
+        """Build the MediaWiki extracts API URL for a title.
+
+        Inputs:
+        - title: Wikipedia page title
+        - lang: language code (optional)
+        Outputs: URL string
+        """
+        title_param = urllib.parse.quote(title)
+        _lang = (lang or "en").strip()
+        return f"https://{_lang}.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext&format=json&titles={title_param}"
+
+    async def _fetch_extract(
+        self, tools: "Tools", title: str, lang: Optional[str] = None, emitter=None
+    ) -> str:
+        """Fetch plaintext extract from Wikipedia API.
+
+        Inputs:
+        - tools: Tools instance for HTTP access
+        - title: Wikipedia page title
+        - lang: language code (defaults to tools.valves.wiki_lang)
+        - emitter: optional event sink
+        Outputs: JSON response string from MediaWiki API
+        """
+        _lang = (lang or tools.valves.wiki_lang or "en").strip()
+        url = self.build_api_url(title, _lang)
+        # Use internal _scrape to maintain retry/emitter behavior
+        return await tools._scrape(
+            url=url, return_raw=True, emitter=emitter, redirect=False
+        )
+
+    def build_page_url(self, title: str, lang: Optional[str] = None) -> str:
+        """Build the Wikipedia page URL for a title.
+
+        Inputs:
+        - title: page title (spaces allowed)
+        - lang: language code (optional)
+        Outputs: URL string to the HTML page
+        """
+        title_param = urllib.parse.quote(title.replace(" ", "_"))
+        _lang = (lang or "en").strip()
+        return f"https://{_lang}.wikipedia.org/wiki/{title_param}"
+
+    async def fetch_pages(
+        self, tools: "Tools", pages: List[str], return_html: bool = False, emitter=None
+    ) -> str:
+        """Fetch multiple Wikipedia pages.
+
+        Inputs:
+        - tools: Tools instance
+        - pages: list of page titles or URLs
+        - return_html: if True, fetch raw HTML; if False, fetch API extracts
+        - emitter: optional event sink
+        Outputs: concatenated string of all page results
+
+        Example usage:
+            handler = WikipediaHandler()
+            content = await handler.fetch_pages(tools, ["Python", "Ruby"], return_raw=False)
+        """
+        retval = ""
+        for page in pages:
+            if return_html:
+                # Build Wikipedia URL and fetch HTML
+                if "wikipedia.org/wiki/" in page:
+                    url = page
+                else:
+                    lang = (tools.valves.wiki_lang or "en").strip()
+                    url = self.build_page_url(page, lang)
+                result = await tools._scrape(
+                    url=url, return_raw=True, emitter=emitter, redirect=False
+                )
+            else:
+                # Parse title and fetch extract
+                title = (
+                    self.parse_title_from_url(page)
+                    if "wikipedia" in page
+                    else page.title()
+                )
+                result = await self._fetch_extract(tools, title, emitter=emitter)
+            retval += str(result)
+        return retval
+
+    async def handle(
+        self, tools: "Tools", url: str, return_html: Optional[bool] = None, emitter=None
+    ) -> str:
+        """Process a Wikipedia URL.
+
+        Inputs:
+        - tools: Tools instance
+        - url: Wikipedia page URL
+        - return_html: if True, fetch raw HTML; if False/None, fetch plaintext extract
+        - emitter: optional event sink
+        Outputs: page content as string
+        """
+        if return_html:
+            return await tools._scrape(
+                url=url, return_raw=True, emitter=emitter, redirect=False
+            )
+        else:
+            title = self.parse_title_from_url(url)
+            return await self._fetch_extract(tools, title, emitter=emitter)
+
+
 class Tools:
-    VERSION = "0.1.4"
+    """
+    High-level async web scraping utility.
+
+    Inputs/Outputs summary:
+    - Public methods return str content (raw HTML/JSON/XML or plaintext summary).
+    - Wikipedia helpers return concatenated page results as str.
+    """
+
+    VERSION = "0.2.0"
+
+    @classmethod
+    def _coverage_touch_class(cls) -> str:
+        """No-op helper to ensure class body lines are executed under coverage.
+
+        Inputs: none
+        Outputs: VERSION string (for assertion)
+        """
+        return cls.VERSION
 
     class Valves(BaseModel):
+        """Runtime tuning knobs.
+
+        Inputs:
+        - user_agent: header value for HTTP requests
+        - retries: number of attempts for fetch with backoff
+        - timeout: per-request timeout seconds
+        - min_summary_size: below this raw HTML is returned
+        - max_summary_size: cap for plaintext length
+        - max_body_bytes: cap for data response size
+        - concurrency: how many files to download at once
+        - wiki_lang: which wiki language? defaults to "en"
+        - deny_hosts: Set a list of denied hosts to scrape from
+        - allow_hosts: A list to override deny_hosts.
+
+        Outputs: N/A (configuration container)
+        """
+
         model_config = {"arbitrary_types_allowed": True}
 
         user_agent: str = Field(
@@ -86,41 +333,112 @@ class Tools:
         )
         timeout: int = Field(10, description="Request timeout in seconds.")
         min_summary_size: int = Field(
-            1024,  # Set appropriate for your context length.
-            description="How large a response do we need before we stop just returning html. Increase this value according to your context length",
+            1024,
+            description="Minimum response size to consider summarizing.",
         )
         max_summary_size: int = Field(
-            1024 * 10, description="Cut a summary off after this many characters."
+            1024 * 2, description="Cut a summary off after this many characters."
+        )
+        max_body_bytes: Optional[int] = Field(
+            1024 * 3,
+            description="If set, cap the fetched response body to this many bytes, default 3k. Keep your context length in mind.",
+        )
+        concurrency: int = Field(
+            5, description="Max concurrent requests when passing multiple URLs."
+        )
+        wiki_lang: str = Field(
+            "en", description="Wikipedia language code for API requests."
+        )
+        allow_hosts: Optional[List[str]] = Field(
+            None,
+            description="If set, only allow requests to these hostnames (exact match).",
+        )
+        deny_hosts: Optional[List[str]] = Field(
+            None,
+            description="If set, disallow requests to these hostnames (exact match).",
         )
 
     def __init__(self):
+        """
+        Initialize with default valves and prepare session management.
+
+        Inputs: none
+        Outputs: Tools instance with lazy ClientSession creation
+        """
         self.valves = self.Valves()
         self._session: Optional[aiohttp.ClientSession] = None
-        self._applied_snapshot = None
+        self._applied_snapshot: Optional[tuple] = None
+        # Use a generic type to avoid pydantic/tooling schema generation on custom classes
+        self._handlers: List[object] = []
         self._ensure_synced()
+        # Register default handlers
+        self.register_handler(WikipediaHandler())
 
     # ------------------------ Internal Utilities ------------------------
 
     def _valves_snapshot(self):
         v = self.valves
-        return (v.user_agent, v.retries, v.timeout, v.min_summary_size)
+        return (
+            v.user_agent,
+            v.retries,
+            v.timeout,
+            v.min_summary_size,
+            v.max_summary_size,
+            v.max_body_bytes,
+            v.concurrency,
+            v.wiki_lang,
+            v.allow_hosts,
+            v.deny_hosts,
+        )
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.close()
 
     async def close(self) -> None:
+        """
+        Close the underlying aiohttp session if open.
+
+        Inputs: none
+        Outputs: None
+        """
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def _emit(self, emitter, event: Dict[str, Any]) -> None:
+    async def _emit(self, emitter: Any, event: Dict[str, Any]) -> None:
+        """
+        Send an event to an optional emitter, supporting sync/async callables.
+
+        Inputs:
+        - emitter: object with async/sync emit(event) or a callable
+        - event: dict payload
+        Outputs: None (errors suppressed)
+        """
         try:
-            if hasattr(emitter, "emit") and asyncio.iscoroutinefunction(emitter.emit):
-                await emitter.emit(event)
-            elif callable(getattr(emitter, "emit", None)):
-                emitter.emit(event)
-            else:
+            emit_attr = getattr(emitter, "emit", None)
+            if emit_attr is not None:
+                if asyncio.iscoroutinefunction(emit_attr):
+                    await emit_attr(event)
+                else:
+                    emit_attr(event)
+                return
+            # emitter itself is callable
+            if asyncio.iscoroutinefunction(emitter):
                 await emitter(event)
+            else:
+                emitter(event)
         except Exception:
             pass
 
     def _ensure_synced(self):
+        """
+        Recreate session when session-affecting valves change.
+
+        Inputs: none
+        Outputs: None (may schedule/perform session close)
+        """
         snapshot = self._valves_snapshot()
         if snapshot == self._applied_snapshot:
             return
@@ -131,13 +449,15 @@ class Tools:
                 if loop.is_running():
                     loop.create_task(self._session.close())
                 else:
-                    asyncio.run(self._session.close())
-            except Exception:
+                    loop.run_until_complete(self._session.close())
+            except Exception:  # pragma: no cover
+                # best-effort; ignore close errors
                 pass
         self._session = None
         self._applied_snapshot = snapshot
 
     async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create the shared aiohttp.ClientSession with current headers."""
         self._ensure_synced()
         if self._session and not self._session.closed:
             return self._session
@@ -145,52 +465,85 @@ class Tools:
         headers = HEADERS.copy()
         if v.user_agent:
             headers["User-Agent"] = v.user_agent
-        self._session = aiohttp.ClientSession(headers=headers)
+        timeout = aiohttp.ClientTimeout(total=float(v.timeout)) if v.timeout else None
+        self._session = aiohttp.ClientSession(headers=headers, timeout=timeout)
         return self._session
+
+    def register_handler(self, handler: object) -> None:
+        """Register a custom site handler.
+
+        Inputs:
+        - handler: SiteHandler instance
+        Outputs: None
+
+        Example usage:
+            tools = Tools()
+            tools.register_handler(MyCustomHandler())
+        """
+        self._handlers.append(handler)
+
+    def get_handler_for(self, url: str) -> Optional[object]:
+        """Find registered handler for a URL.
+
+        Inputs:
+        - url: target URL string
+        Outputs: matching SiteHandler or None
+
+        Example usage:
+            handler = tools.get_handler_for("https://en.wikipedia.org/wiki/Python")
+            if handler:
+                result = await handler.handle(tools, url)
+        """
+        for handler in self._handlers:
+            if handler.can_handle(url):
+                return handler
+        return None
 
     # ------------------------ Helpers and Aliases ------------------------
     ## Wikipedia
-    async def _wiki_do_not_call_me(  # stupid LLMs calling internal functions.
-        self, page: str, return_html: bool = True, lang: str = "en", emitter=None
-    ) -> str:
-        """
-        Fetch json from wikipedia. returns the English version
-        TODO: language valve
-        """
-        url = ""
-        if "http" in page or "wikipedia.com" in page:
-            page = page.rsplit("/", 1)[-1]
-        page = page.title()  # Title Case for Wikipedia
-        url = f"https://{lang}.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext&format=json&titles={page}"
-        return await self.scrape(url=url, return_html=return_html, emitter=emitter)
-
     async def wikipedia(
         self,
-        pages: list[str] = [],
-        page: str = None,
-        url: str = None,
-        urls: list[str] = [],
-        return_html: bool = True,
+        pages: Optional[List[str]] = None,
+        page: Optional[str] = None,
+        url: Optional[str] = None,
+        urls: Optional[List[str]] = None,
+        return_raw: bool = True,
         emitter=None,
     ) -> str:
-        """
-        Retrieve Multiple Pages from wikipedia
-        pages: a list of str of pages to retrieve
-        """
-        if page:
-            pages.append(page)
-        if url:
-            pages.append(url)
-        if urls:
-            pages.append(urls)
+        """Retrieve multiple pages from Wikipedia via the extracts API.
 
-        retval = ""
-        for page in pages:
-            scrape = await self._wiki_do_not_call_me(
-                page=page, return_html=return_html, emitter=emitter
-            )
-            retval += str(scrape)
-        return retval
+        Inputs:
+        - pages/page: titles or page URLs; URLs are normalized to titles
+        - url/urls: alternative URL inputs
+        - return_raw: True to get raw API JSON; False to summarize API response
+        - emitter: optional event sink
+
+        Output: concatenated string of results
+
+        Example usage:
+            tools = Tools()
+            content = await tools.wikipedia(pages=["Python", "Ruby"], return_raw=False)
+        """
+        pages_list = list(pages or [])
+        if page:
+            pages_list.append(page)
+        if url:
+            pages_list.append(url)
+        if urls:
+            pages_list.extend(urls)
+
+        # Get Wikipedia handler from registry
+        handler = None
+        for h in self._handlers:
+            if isinstance(h, WikipediaHandler):
+                handler = h
+                break
+        if not handler:
+            raise RuntimeError("WikipediaHandler not registered")
+
+        return await handler.fetch_pages(
+            self, pages_list, return_html=return_raw, emitter=emitter
+        )
 
     wikipedia_multi = wikipedia
     wikipedia_pages = wikipedia
@@ -199,8 +552,18 @@ class Tools:
 
     # ------------------------ Helpers and Aliases------------------------
     ## Summarize
-    async def summarize(self, urls: list[str] = [], url: str = None, emitter=None):
-        return await self.scrape(urls, url=url, return_html=False, emitter=emitter)
+    async def summarize(
+        self, urls: Optional[List[str]] = None, url: Optional[str] = None, emitter=None
+    ):
+        """
+        Fetch and return plaintext summary for one or more URLs.
+
+        Inputs:
+        - urls/url: one or many URLs to fetch
+        - emitter: optional event sink
+        Output: concatenated plaintext summaries
+        """
+        return await self.scrape(urls or [], url=url, return_raw=False, emitter=emitter)
 
     get_summary = summarize
     overview = summarize
@@ -209,32 +572,100 @@ class Tools:
 
     async def scrape(
         self,
-        urls: list[str] = [],
-        url: str = None,
-        return_html: bool = True,
+        urls: Optional[List[str]] = None,
+        url: Optional[str] = None,
+        return_raw: bool = True,
         emitter=None,
-    ) -> Union[Dict[str, Any], str]:  # Fixed typing here
-        """
-        Fetch, parse, and extract title, main content, summary
-        option: return_html = True to get ONLY the raw content.
-        option: return_html = False to get ONLY the summary.
+        redirect: bool = True,
+        return_structured: bool = False,
+    ) -> str:
+        """Fetch content and optionally convert HTML to plaintext.
 
-        Note: files below valve min_summary_size will be returned as-is
+        Inputs:
+        - urls/url: one or many URLs
+        - return_raw: True returns raw body; False returns plaintext summary
+        - emitter: optional event sink receiving lifecycle events
+        - redirect: if True, Wikipedia URLs are routed to the API helper
+
+        Output: concatenated str of page results
         """
+        items = list(urls or [])
         if url:
-            urls.append(url)
-        result = ""
-        for page in urls:
-            val = await self._scrape(url=page, return_html=return_html, emitter=emitter)
-            result += str(val)
-        return result
+            items.append(url)
 
-    async def _scrape(self, url: str, return_html: bool = True, emitter=None) -> str:
-        """Internal Method: Do not call"""
+        # Validate allow/block lists
+        allow = self.valves.allow_hosts
+        deny = self.valves.deny_hosts
+        if allow or deny:
+            for page in items:
+                parsed = urllib.parse.urlparse(page)
+                host = parsed.hostname
+                if not parsed.scheme or not parsed.netloc:
+                    raise ValueError(f"Invalid URL: {page}")
+                # allowlist takes precedence over blocklist
+                if allow:
+                    if host in allow:
+                        continue
+                    if not deny:
+                        raise ValueError(f"Host not allowed: {page}")
+
+                if deny and host in deny:
+                    raise ValueError(f"Host blocked: {page}")
+
+        sem = asyncio.Semaphore(max(1, int(self.valves.concurrency) or 1))
+
+        async def process(page: str):
+            async with sem:
+                if emitter:
+                    await self._emit(emitter, {"type": "start", "url": page})
+                if redirect:
+                    # Use handler for special handlers, like Wikipedia URLs
+                    handler = self.get_handler_for(page)
+                    if handler and isinstance(handler, WikipediaHandler):
+                        ret = await handler.handle(
+                            self, page, return_html=return_raw, emitter=emitter
+                        )
+                    else:
+                        ret = await self._scrape(
+                            url=page, return_raw=return_raw, emitter=emitter
+                        )
+                else:
+                    ret = await self._scrape(
+                        url=page, return_raw=return_raw, emitter=emitter
+                    )
+                if return_structured:
+                    return {"url": page, "content": ret}
+                return ret
+
+        results = (
+            [await process(p) for p in items]
+            if len(items) <= 1
+            else await asyncio.gather(*[process(p) for p in items])
+        )
+        if return_structured:
+            return results
+        if len(results) == 1:
+            return results[0]
+        return "\n\n".join(map(str, results))
+
+    async def _scrape(
+        self, url: str, return_raw: bool = True, emitter=None, redirect=True
+    ) -> str:
+        """
+        Low-level fetch + transform for a single URL.
+
+        Inputs:
+        - url: target URL
+        - return_raw: passthrough raw response when True; else plaintext summary
+        - emitter: optional callback for progress events
+        Outputs: str
+        """
+        if url is None:
+            raise ValueError("URL cannot be None")
 
         async def _fetch(self, url: str, emitter=None) -> str:
             sess = await self._get_session()
-            retries = max(0, int(self.valves.retries))
+            retries = max(1, int(self.valves.retries))
             backoff_base = 0.5
             last_exc = None
 
@@ -246,18 +677,45 @@ class Tools:
                     )
                 try:
                     async with sess.get(url, timeout=int(self.valves.timeout)) as resp:
-                        resp.raise_for_status()
-                        text = await resp.text()
+                        max_bytes: int = int(self.valves.max_body_bytes)
+                        # Read with optional size cap
+                        # Determine text vs bytes decoding later
+                        body = await resp.read()
+                        status = resp.status
+                        if status >= 400:
+                            raise aiohttp.ClientResponseError(
+                                resp.request_info,
+                                resp.history,
+                                status=status,
+                                message="bad status",
+                            )
                         if emitter:
                             await self._emit(
                                 emitter,
-                                {"type": "fetched", "status": resp.status, "url": url},
+                                {"type": "fetched", "status": status, "url": url},
                             )
-                        return text
+                        # apply max_body_bytes
+                        if (
+                            isinstance(max_bytes, int)
+                            and max_bytes > 0
+                            and len(body) > max_bytes
+                        ):
+                            body = body[:max_bytes]
+                        # Decode according to content-type
+                        ctype = resp.headers.get("Content-Type", "")
+                        charset = None
+                        if "charset=" in ctype:
+                            charset = (
+                                ctype.split("charset=", 1)[-1].split(";")[0].strip()
+                            )
+                        text = body.decode(charset or "utf-8", errors="replace")
+                        return text, ctype
                 except Exception as e:
                     last_exc = e
                     if attempt < retries:
-                        wait = backoff_base * (2 ** (attempt - 1))
+                        # status-based retry window
+                        jitter = random.uniform(0, 0.25)
+                        wait = backoff_base * (2 ** (attempt - 1)) + jitter
                         if emitter:
                             await self._emit(
                                 emitter,
@@ -283,7 +741,9 @@ class Tools:
 
         def _clean_html(html):
             flags = re.S | re.M | re.I
+            # Wikipedia page
             html = re.sub(r".*Contents.move to sidebar.hide", "", html, flags=flags)
+            # Scripts and headers
             html = re.sub(r"<head>.*</head>", "", html, flags=flags)
             html = re.sub(r"<script>.*</script>", "", html, flags=flags)
             return html
@@ -291,20 +751,16 @@ class Tools:
         def _get_all_content(html) -> str:
             return html2text.html2text(_clean_html(html))
 
-        def _summarize(self, text: str, max_words=2048) -> str:
-            """Simple naive summarizer"""
-            words = re.split(r"\s+", _clean_html(text))
-            return " ".join(words[:max_words])
+        # / Helpers
 
-        # --- Actual work ---
+        ####################################
+        # --- Actual work for scrape() --- #
+        ####################################
+
         self._ensure_synced()
-        if not url:
-            raise ValueError("Input must be a string with a valid 'url'.")
-        if emitter:
-            await self._emit(emitter, {"type": "start", "url": url})
 
         try:
-            html = await _fetch(self, url, emitter=emitter)
+            page_data, content_type = await _fetch(self, url, emitter=emitter)
         except Exception as e:
             # Emit a clear failure event and avoid caching broken data
             if emitter:
@@ -312,48 +768,68 @@ class Tools:
                     emitter,
                     {"type": "fetch_failed_final", "url": url, "error": str(e)},
                 )
-            raise  # re-raise so caller still gets the error
+            raise e  # re-raise so caller still gets the error
 
         try:
-            json_obj = json.loads(html)
+            # Prefer header detection if available via simplistic heuristic
+            # Already decoded above; attempt JSON parse
+            json_obj = json.loads(page_data)
             if emitter:
                 await self._emit(
                     emitter,
                     {"type": "found json", "url": url},
                 )
-
-            return_html = True
+            if not return_raw:
+                # Return parsed JSON when plaintext is requested
+                return json_obj
+            # Otherwise return_raw = True means return as-is
         except (json.JSONDecodeError, ValueError):
             pass
 
-        # Dumb XML Check
+        # Simple XML check via header
         try:
             xml_pattern = r"^\s*<\?xml\s"
-            if re.match(xml_pattern, html):
-                """We've found XML"""
-                return_html = True
-        except Exception as e:
+            xml_elem = (
+                ET.fromstring(page_data) if re.match(xml_pattern, page_data) else None
+            )
+            if xml_elem is not None:
+                if not return_raw:
+                    # Return parsed XML element when plaintext is requested
+                    return xml_elem
+                    # Otherwise return_raw = True means return as-is
+        except Exception as e:  # pragma: no cover
             pass
 
         min_size_check = int(self.valves.min_summary_size) or 0
-        if min_size_check and len(html) <= min_size_check:
-            return_html = True
+        if min_size_check and len(page_data) <= min_size_check:
+            return_raw = True
 
         if emitter:
             await self._emit(emitter, {"type": "done", "url": url})
 
-        if return_html:
-            return html
+        content = _get_all_content(page_data)
 
-        content = _get_all_content(html)
+        # Add header to identify which url this was.
+        page_data_with_header = "\n".join([f"Contents of url: {url}", page_data])
+        content_with_header = (
+            "\n".join([f"Contents of url: {url}", content, "\n"])
+            if content and content.strip()
+            else ""
+        )
+
+        if return_raw:
+            return page_data_with_header
+
         max_size_check = int(self.valves.max_summary_size) or 0
         if max_size_check and len(content) >= max_size_check:
             content = content[:max_size_check]
+            content_with_header = "\n".join([f"Contents of url: {url}", content])
 
-        if content:
-            return content
+        if content and content.strip():
+            return content_with_header
 
-        return html
+        # If no content extracted, return the raw page_data with header
+        return page_data_with_header
 
     get = scrape
     fetch = scrape
