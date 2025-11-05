@@ -64,8 +64,8 @@ Data of type XML or JSON will be parsed and returned as Python data structures (
 - retries: Number of times to attempt the scrape
 - min_summary_size: the minimum size of a page before a summary is allowed.
 - concurrency: max parallel fetches for multi-URL scraping.
-- allow_hosts: optional host allowlist (exact hostnames).
-- deny_hosts: optional host blocklist (allowlist entries take precedence).
+- allow_hosts: when set without deny_hosts, only these exact hostnames are allowed (strict allowlist).
+- deny_hosts: exact hostnames to block. If both allow_hosts and deny_hosts are set, allow_hosts entries override denies; other hosts are permitted unless listed in deny_hosts.
 - wiki_lang: language code for Wikipedia API (e.g., 'en', 'de').
 - max_body_bytes: truncate large bodies to this many bytes.
 -------

@@ -148,6 +148,19 @@ class WikipediaHandler(SiteHandler):
     name = "wikipedia"
     domains = (".wikipedia.org",)
 
+    def can_handle(self, url: str) -> bool:
+        """Check if this handler can process a given URL.
+
+        Inputs:
+        - url: target URL string
+        Outputs: True if URL matches any of this handler's domains
+        """
+        hostname = self._hostname_from_url(url)
+        return (
+            any(hostname.endswith(domain) for domain in self.domains)
+            and not "api.php" in url
+        )
+
     @staticmethod
     def parse_title_from_url(url: str) -> str:
         """Extract Wikipedia page title from URL.
@@ -591,10 +604,11 @@ class Tools:
                     raise ValueError(f"Invalid URL: {page}")
                 # allowlist takes precedence over blocklist
                 if allow:
-                    if host not in allow:
+                    if host in allow:
+                        continue
+                    if not deny:
                         raise ValueError(f"Host not allowed: {page}")
-                    # host in allow: permitted regardless of deny
-                    continue
+
                 if deny and host in deny:
                     raise ValueError(f"Host blocked: {page}")
 
@@ -604,8 +618,8 @@ class Tools:
             async with sem:
                 if emitter:
                     await self._emit(emitter, {"type": "start", "url": page})
-                if redirect and ("wikipedia" in page and "api" not in page):
-                    # Use handler for Wikipedia URLs
+                if redirect:
+                    # Use handler for special handlers, like Wikipedia URLs
                     handler = self.get_handler_for(page)
                     if handler and isinstance(handler, WikipediaHandler):
                         ret = await handler.handle(
