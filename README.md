@@ -16,19 +16,26 @@ Data of type XML or JSON will be parsed and returned as Python data structures (
 - Plenty of aliases to help even dumb models find the tools
 - Best of all: it actually works!
 
-----
-### Notes:
-- Your model may not like "scrape" so try "fetch", "get", or others if blocked.
-- Sometimes blocked by "anti-scrape" mechanism
-- Try the "Fine Tuning" section for an example system instruction.
 
 -----
-### New in v.0.2.0:
+## Example:
+
+- scrape https://www.reddit.com/r/openwebui.rss and explain the results
+- fetch the page at https://webscraper.io/test-sites/e-commerce/allinone and explain the html structure
+- explain the contents of https://www.cs.utexas.edu/~mitra/csFall2010/cs329/lectures/xml/xslplanes.1.xml.txt
+- https://openwebui.com/robots.txt is scraping allowed?
+- get https://www.web-scraping.dev/product/2 and give me a summary
+- get the wikipedia page for "Beer" and explain it to me
+
+-----
+### New in **v.0.2.0**:
+- Big overhaul
+- All public APIs remain unchanged
 - Introduced SiteHandler base class for custom domain-specific processing
 - Migrated Wikipedia logic into WikipediaHandler
 - Fixed Wikipedia URL redirect bug in scrape()
-- All public APIs remain unchanged
 
+----
 ### New in v.0.1.4:
 - Scrape function now allow for multiple urls to be given
 - Bugfixes, better aliases
@@ -46,16 +53,12 @@ Data of type XML or JSON will be parsed and returned as Python data structures (
 ### New in v0.1.1:
 - Automatically detect JSON and XML data and return it without parsing
 
+----
+### Notes:
+- Your model may not like "scrape" so try "fetch", "get", or others if blocked.
+- Sometimes blocked by "anti-scrape" mechanism
+- Try the "Fine Tuning" section for an example system instruction.
 
------
-## Example:
-
-- scrape https://www.reddit.com/r/openwebui.rss and explain the results
-- fetch the page at https://webscraper.io/test-sites/e-commerce/allinone and explain the html structure
-- explain the contents of https://www.cs.utexas.edu/~mitra/csFall2010/cs329/lectures/xml/xslplanes.1.xml.txt
-- https://openwebui.com/robots.txt is scraping allowed?
-- get https://www.web-scraping.dev/product/2 and give me a summary
-- get the wikipedia page for "Beer" and explain it to me
 
 ------
 ## Valves:
