@@ -351,11 +351,15 @@ class Tools:
             description="Minimum response size to consider summarizing.",
         )
         max_summary_size: int = Field(
-            1024 * 2, description="Cut a summary off after this many characters."
+            1024 * 4, description="Cut a summary off after this many characters."
         )
         max_body_bytes: Optional[int] = Field(
-            1024 * 3,
+            1024 * 32,
             description="If set, cap the fetched response body to this many bytes, default 3k. Keep your context length in mind.",
+        )
+        max_return_size: Optional[int] = Field(
+            1024 * 10,
+            description="If set, cap the length of the response",
         )
         concurrency: int = Field(
             5, description="Max concurrent requests when passing multiple URLs."
@@ -403,6 +407,7 @@ class Tools:
             v.wiki_lang,
             v.allow_hosts,
             v.deny_hosts,
+            v.max_return_size,
         )
 
     async def __aenter__(self):
@@ -776,10 +781,12 @@ class Tools:
             page_data, content_type = await _fetch(self, url, emitter=emitter)
         except Exception as e:
             # Emit a clear failure event and avoid caching broken data
+            error = str(e)
+
             if emitter:
                 await self._emit(
                     emitter,
-                    {"type": "fetch_failed_final", "url": url, "error": str(e)},
+                    {"type": "fetch_failed_final", "url": url, "error": error},
                 )
             raise e  # re-raise so caller still gets the error
 
@@ -806,10 +813,8 @@ class Tools:
                 ET.fromstring(page_data) if re.match(xml_pattern, page_data) else None
             )
             if xml_elem is not None:
-                if not return_raw:
-                    # Return parsed XML element when plaintext is requested
-                    return xml_elem
-                    # Otherwise return_raw = True means return as-is
+                return_raw = True
+
         except Exception as e:  # pragma: no cover
             pass
 
@@ -830,10 +835,18 @@ class Tools:
             else ""
         )
 
+        max_return_size = int(self.valves.max_return_size) or 0
+        if max_return_size:
+            page_data_with_header = page_data_with_header[:max_return_size]
+            content_with_header = content_with_header[:max_return_size]
+
         if return_raw:
             return page_data_with_header
 
-        max_size_check = int(self.valves.max_summary_size) or 0
+        max_size_check = int(self.valves.max_summary_size)
+        if max_return_size and max_return_size < max_size_check:
+            max_size_check = max_return_size
+
         if max_size_check and len(content) >= max_size_check:
             content = content[:max_size_check]
             content_with_header = "\n".join([f"Contents of url: {url}", content])
