@@ -3,7 +3,7 @@ title: Async Webscraper
 author: Zack Allison <zack@zackallison.com>
 author_url: https://github.com/zallison
 git_url: https://github.com/zallison/async_webscraper_openwebui
-version: 0.1.5
+version: 0.2.0
 """
 
 """
@@ -39,12 +39,12 @@ import xml.etree.ElementTree as ET
 
 try:
     import html2text
-except ImportError as e:  # pragma: no cover
-    import lxml  # pragma: no cover
+except ImportError as e:
+    import lxml
 
-    class html2text:  # pragma: no cover
+    class html2text:
         @staticmethod
-        def html2text(html: str) -> str:  # pragma: no cover
+        def html2text(html: str) -> str:
             plain_text = lxml.etree.HTML(html.encode("utf-8")).xpath("//text()")
             return " ".join(plain_text)
 
@@ -68,10 +68,9 @@ HEADERS = {
 }
 
 try:
-    from fake_useragent import UserAgent  # pragma: no cover
-
-    ua = UserAgent()  # pragma: no cover
-    USER_AGENT = ua.random()  # pragma: no cover
+    from fake_useragent import UserAgent
+    ua = UserAgent()
+    USER_AGENT = ua.random()
 except Exception as e:
     pass
 
@@ -116,7 +115,9 @@ class SiteHandler:
         hostname = self._hostname_from_url(url)
         return any(hostname.endswith(domain) for domain in self.domains)
 
-    async def handle(self, tools: "Tools", url: str, return_html: Optional[bool] = None) -> str:
+    async def handle(
+        self, tools: "Tools", url: str, return_html: Optional[bool] = None
+    ) -> str:
         """Process a URL using custom logic.
 
         Inputs:
@@ -193,7 +194,9 @@ class WikipediaHandler(SiteHandler):
         _lang = (lang or tools.valves.wiki_lang or "en").strip()
         url = self.build_api_url(title, _lang)
         # Use internal _scrape to maintain retry/emitter behavior
-        return await tools._scrape(url=url, return_raw=True, emitter=emitter, redirect=False)
+        return await tools._scrape(
+            url=url, return_raw=True, emitter=emitter, redirect=False
+        )
 
     def build_page_url(self, title: str, lang: Optional[str] = None) -> str:
         """Build the Wikipedia page URL for a title.
@@ -232,7 +235,9 @@ class WikipediaHandler(SiteHandler):
                 else:
                     lang = (tools.valves.wiki_lang or "en").strip()
                     url = self.build_page_url(page, lang)
-                result = await tools._scrape(url=url, return_raw=True, emitter=emitter, redirect=False)
+                result = await tools._scrape(
+                    url=url, return_raw=True, emitter=emitter, redirect=False
+                )
             else:
                 # Parse title and fetch extract
                 title = (
@@ -274,7 +279,7 @@ class Tools:
     - Wikipedia helpers return concatenated page results as str.
     """
 
-    VERSION = "0.1.5"
+    VERSION = "0.2.0"
 
     @classmethod
     def _coverage_touch_class(cls) -> str:
@@ -372,10 +377,10 @@ class Tools:
         )
 
     async def __aenter__(self):
-        return self  # pragma: nocover
+        return self
 
     async def __aexit__(self, exc_type, exc, tb):
-        await self.close()  # pragma: nocover
+        await self.close()
 
     async def close(self) -> None:
         """
@@ -430,7 +435,7 @@ class Tools:
                     loop.create_task(self._session.close())
                 else:
                     loop.run_until_complete(self._session.close())
-            except Exception:  # pragma: nocover
+            except Exception:
                 # best-effort; ignore close errors
                 pass
         self._session = None
@@ -776,7 +781,7 @@ class Tools:
                     # Return parsed XML element when plaintext is requested
                     return xml_elem
                     # Otherwise return_raw = True means return as-is
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             pass
 
         min_size_check = int(self.valves.min_summary_size) or 0
@@ -815,5 +820,3 @@ class Tools:
     pull = scrape
     download = scrape
     html = scrape
-
-
