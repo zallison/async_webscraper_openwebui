@@ -1,6 +1,8 @@
 """
 title: Async Webscraper
 author: Zack Allison <zack@zackallison.com>
+author_url: https://github.com/zallison
+git_url: https://github.com/zallison/async_webscraper_openwebui
 version: 0.1.5
 """
 
@@ -72,6 +74,157 @@ try:
     USER_AGENT = ua.random()  # pragma: no cover
 except Exception as e:
     pass
+
+
+class SiteHandler:
+    """Base class for custom domain-specific processing.
+
+    Inputs: Subclasses override name, domains, and async handle() method.
+    Outputs: Provides domain routing and processing delegation.
+
+    Example usage:
+        class MyHandler(SiteHandler):
+            name = "mysite"
+            domains = (".example.com",)
+
+            async def handle(self, tools, url, return_html=None):
+                # custom processing
+                return "..."
+    """
+
+    name: str = "base"
+    domains: tuple = ()
+
+    def can_handle(self, url: str) -> bool:
+        """Check if this handler can process a given URL.
+
+        Inputs:
+        - url: target URL string
+        Outputs: True if URL matches any of this handler's domains
+        """
+        parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname or ""
+        return any(hostname.endswith(domain) for domain in self.domains)
+
+    async def handle(self, tools: "Tools", url: str, return_html: Optional[bool] = None) -> str:
+        """Process a URL using custom logic.
+
+        Inputs:
+        - tools: Tools instance providing session, retries, emitter, valves
+        - url: target URL
+        - return_html: if True, return raw HTML; if False, return plaintext; None defaults to handler behavior
+        Outputs: str content (HTML or plaintext)
+
+        Example usage:
+            handler = get_handler_for("https://example.com")
+            result = await handler.handle(tools_instance, url, return_html=True)
+        """
+        raise NotImplementedError("Subclasses must implement handle()")
+
+
+class WikipediaHandler(SiteHandler):
+    """Handler for Wikipedia URLs using MediaWiki API.
+
+    Inputs: URLs with .wikipedia.org domain
+    Outputs: Page extracts (plaintext) or raw HTML
+
+    Example usage:
+        handler = WikipediaHandler()
+        extract = await handler.handle(tools, "https://en.wikipedia.org/wiki/Python", return_html=False)
+    """
+
+    name = "wikipedia"
+    domains = (".wikipedia.org",)
+
+    @staticmethod
+    def parse_title_from_url(url: str) -> str:
+        """Extract Wikipedia page title from URL.
+
+        Inputs:
+        - url: Wikipedia page URL like https://en.wikipedia.org/wiki/Alan_Turing
+        Outputs: Title-cased page title string
+
+        Example usage:
+            title = WikipediaHandler.parse_title_from_url("https://en.wikipedia.org/wiki/Alan_Turing")
+            # returns "Alan Turing"
+        """
+        if "wikipedia" in url and "api" not in url:
+            # Extract last path segment as title
+            page = url.rsplit("/", 1)[-1]
+            page = urllib.parse.unquote(page)
+            page = page.replace("_", " ")
+            return page.title()
+        return url.title()
+
+    async def _fetch_extract(
+        self, tools: "Tools", title: str, lang: Optional[str] = None, emitter=None
+    ) -> str:
+        """Fetch plaintext extract from Wikipedia API.
+
+        Inputs:
+        - tools: Tools instance for HTTP access
+        - title: Wikipedia page title
+        - lang: language code (defaults to tools.valves.wiki_lang)
+        - emitter: optional event sink
+        Outputs: JSON response string from MediaWiki API
+        """
+        title_param = urllib.parse.quote(title)
+        _lang = (lang or tools.valves.wiki_lang or "en").strip()
+        url = f"https://{_lang}.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext&format=json&titles={title_param}"
+        # Use internal _scrape to maintain retry/emitter behavior
+        return await tools._scrape(url=url, return_raw=True, emitter=emitter, redirect=False)
+
+    async def fetch_pages(
+        self, tools: "Tools", pages: List[str], return_html: bool = False, emitter=None
+    ) -> str:
+        """Fetch multiple Wikipedia pages.
+
+        Inputs:
+        - tools: Tools instance
+        - pages: list of page titles or URLs
+        - return_html: if True, fetch raw HTML; if False, fetch API extracts
+        - emitter: optional event sink
+        Outputs: concatenated string of all page results
+
+        Example usage:
+            handler = WikipediaHandler()
+            content = await handler.fetch_pages(tools, ["Python", "Ruby"], return_html=False)
+        """
+        retval = ""
+        for page in pages:
+            if return_html:
+                # Build Wikipedia URL and fetch HTML
+                if "wikipedia.org/wiki/" in page:
+                    url = page
+                else:
+                    title_param = urllib.parse.quote(page.replace(" ", "_"))
+                    lang = (tools.valves.wiki_lang or "en").strip()
+                    url = f"https://{lang}.wikipedia.org/wiki/{title_param}"
+                result = await tools._scrape(url=url, return_raw=True, emitter=emitter, redirect=False)
+            else:
+                # Parse title and fetch extract
+                title = self.parse_title_from_url(page) if "wikipedia" in page else page.title()
+                result = await self._fetch_extract(tools, title, emitter=emitter)
+            retval += str(result)
+        return retval
+
+    async def handle(
+        self, tools: "Tools", url: str, return_html: Optional[bool] = None, emitter=None
+    ) -> str:
+        """Process a Wikipedia URL.
+
+        Inputs:
+        - tools: Tools instance
+        - url: Wikipedia page URL
+        - return_html: if True, fetch raw HTML; if False/None, fetch plaintext extract
+        - emitter: optional event sink
+        Outputs: page content as string
+        """
+        if return_html:
+            return await tools._scrape(url=url, return_raw=True, emitter=emitter, redirect=False)
+        else:
+            title = self.parse_title_from_url(url)
+            return await self._fetch_extract(tools, title, emitter=emitter)
 
 
 class Tools:
@@ -149,7 +302,10 @@ class Tools:
         self.valves = self.Valves()
         self._session: Optional[aiohttp.ClientSession] = None
         self._applied_snapshot: Optional[tuple] = None
+        self._handlers: List[SiteHandler] = []
         self._ensure_synced()
+        # Register default handlers
+        self.register_handler(WikipediaHandler())
 
     # ------------------------ Internal Utilities ------------------------
 
@@ -246,32 +402,38 @@ class Tools:
         self._session = aiohttp.ClientSession(headers=headers, timeout=timeout)
         return self._session
 
+    def register_handler(self, handler: SiteHandler) -> None:
+        """Register a custom site handler.
+
+        Inputs:
+        - handler: SiteHandler instance
+        Outputs: None
+
+        Example usage:
+            tools = Tools()
+            tools.register_handler(MyCustomHandler())
+        """
+        self._handlers.append(handler)
+
+    def get_handler_for(self, url: str) -> Optional[SiteHandler]:
+        """Find registered handler for a URL.
+
+        Inputs:
+        - url: target URL string
+        Outputs: matching SiteHandler or None
+
+        Example usage:
+            handler = tools.get_handler_for("https://en.wikipedia.org/wiki/Python")
+            if handler:
+                result = await handler.handle(tools, url)
+        """
+        for handler in self._handlers:
+            if handler.can_handle(url):
+                return handler
+        return None
+
     # ------------------------ Helpers and Aliases ------------------------
     ## Wikipedia
-    async def _do_not_call_me(  # Wiki Scrape
-        self,
-        page: str,
-        return_raw: bool = True,
-        lang: Optional[str] = None,
-        emitter=None,
-    ) -> str:
-        """
-        Fetch json from wikipedia. returns the English version
-        TODO: language valve
-        """
-        url = ""
-        if "wikipedia" in page and "api" not in page:
-            # Extract last path segment as title
-            page = page.rsplit("/", 1)[-1]
-            page = urllib.parse.unquote(page)
-            page = page.replace("_", " ")
-
-        page = page.title()  # Title Case for Wikipedia
-        title_param = urllib.parse.quote(page)
-        _lang = (lang or self.valves.wiki_lang or "en").strip()
-        url = f"https://{_lang}.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext&format=json&titles={title_param}"
-        return await self.scrape(url=url, return_raw=return_raw, emitter=emitter)
-
     async def wikipedia(
         self,
         pages: Optional[List[str]] = None,
@@ -290,22 +452,29 @@ class Tools:
         - emitter: optional event sink
 
         Output: concatenated string of results
-        """
-        pages = list(pages or [])
-        if page:
-            pages.append(page)
-        if url:
-            pages.append(url)
-        if urls:
-            pages.extend(urls)
 
-        retval = ""
-        for page in pages:
-            scrape = await self._do_not_call_me(
-                page=page, return_raw=return_raw, emitter=emitter
-            )
-            retval += str(scrape)
-        return retval
+        Example usage:
+            tools = Tools()
+            content = await tools.wikipedia(pages=["Python", "Ruby"], return_raw=False)
+        """
+        pages_list = list(pages or [])
+        if page:
+            pages_list.append(page)
+        if url:
+            pages_list.append(url)
+        if urls:
+            pages_list.extend(urls)
+
+        # Get Wikipedia handler from registry
+        handler = None
+        for h in self._handlers:
+            if isinstance(h, WikipediaHandler):
+                handler = h
+                break
+        if not handler:
+            raise RuntimeError("WikipediaHandler not registered")
+
+        return await handler.fetch_pages(self, pages_list, return_html=return_raw, emitter=emitter)
 
     wikipedia_multi = wikipedia
     wikipedia_pages = wikipedia
@@ -380,9 +549,14 @@ class Tools:
                 if emitter:
                     await self._emit(emitter, {"type": "start", "url": page})
                 if redirect and ("wikipedia" in page and "api" not in page):
-                    ret = await self.wikipedia(
-                        url=page, return_raw=return_raw, emitter=emitter
-                    )
+                    # Use handler for Wikipedia URLs
+                    handler = self.get_handler_for(page)
+                    if handler and isinstance(handler, WikipediaHandler):
+                        ret = await handler.handle(self, page, return_html=return_raw, emitter=emitter)
+                    else:
+                        ret = await self._scrape(
+                            url=page, return_raw=return_raw, emitter=emitter
+                        )
                 else:
                     ret = await self._scrape(
                         url=page, return_raw=return_raw, emitter=emitter
@@ -504,11 +678,6 @@ class Tools:
 
         def _get_all_content(html) -> str:
             return html2text.html2text(_clean_html(html))
-
-        def _summarize(self, text: str, max_word: int = 2048) -> str:
-            """Simple naive summarizer"""
-            words = re.split(r"\s+", _clean_html(text))
-            return "\n".join("Summary:", " ".join(words[:max_words]))
 
         # / Helpers
 
