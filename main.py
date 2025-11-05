@@ -3,7 +3,7 @@ title: Async Webscraper
 author: Zack Allison <zack@zackallison.com>
 author_url: https://github.com/zallison
 git_url: https://github.com/zallison/async_webscraper_openwebui
-version: 0.2.0
+version: 0.2.1
 """
 
 """
@@ -37,16 +37,30 @@ import urllib.parse
 import random
 import xml.etree.ElementTree as ET
 
+""" Try to use html2text, if it's not available use the lxml library """
+
 try:
     import html2text
 except ImportError as e:
-    import lxml
+    try:
+        import lxml
 
-    class html2text:
-        @staticmethod
-        def html2text(html: str) -> str:
-            plain_text = lxml.etree.HTML(html.encode("utf-8")).xpath("//text()")
-            return " ".join(plain_text)
+        class html2text:
+            @staticmethod
+            def html2text(html: str) -> str:
+                plain_text = lxml.etree.HTML(html.encode("utf-8")).xpath("//text()")
+                return " ".join(plain_text)
+
+    except ImportError as e:
+
+        class html2text:
+
+            @staticmethod
+            def html2text(html: str) -> str:
+                flags = re.S | re.M | re.I
+                clean_pattern = r'(?<=<\\w+)((?:\\s+)((?:on\\w+=((\"[^\\"]*\")|(\'[^\']*\')|(.*?)))|(?(?!on)\\w+=((\"[^\\"]*\")|(\'[^\']*\')|(.*?))))*(?=/?>)'
+                re.sub(clean_pattern, "", html, flag=flags)
+                return " ".join(html)
 
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -737,15 +751,14 @@ class Tools:
                                     "error": str(e),
                                 },
                             )
-            raise Exception(f"Failed to fetch {url}: {last_exc}")
+            raise Exception(f"Failed to fetch {url}: {last_exc} error {str(e)}")
 
         def _clean_html(html):
-            flags = re.S | re.M | re.I
-            # Wikipedia page
-            html = re.sub(r".*Contents.move to sidebar.hide", "", html, flags=flags)
-            # Scripts and headers
-            html = re.sub(r"<head>.*</head>", "", html, flags=flags)
-            html = re.sub(r"<script>.*</script>", "", html, flags=flags)
+            # Remove scripts, styles, and head content to avoid non-visible text
+            flags = re.S | re.I
+            html = re.sub(r"<script\b[^>]*>.*?</script>", "", html, flags=flags)
+            html = re.sub(r"<style\b[^>]*>.*?</style>", "", html, flags=flags)
+            html = re.sub(r"<head\b[^>]*>.*?</head>", "", html, flags=flags)
             return html
 
         def _get_all_content(html) -> str:
