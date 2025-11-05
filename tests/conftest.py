@@ -17,7 +17,14 @@ sys.modules.setdefault("html2text", mod)
 
 
 class FakeResponse:
-    def __init__(self, url: str, status: int, text: str, raise_for_status_exc: Optional[Exception] = None, headers: Optional[Dict[str, str]] = None):
+    def __init__(
+        self,
+        url: str,
+        status: int,
+        text: str,
+        raise_for_status_exc: Optional[Exception] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ):
         self.url = url
         self.status = status
         self._text = text
