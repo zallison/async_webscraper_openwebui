@@ -400,7 +400,7 @@ class Tools:
             return results
         if len(results) == 1:
             return results[0]
-        return " ".join(map(str, results))
+        return "\n\n".join(map(str, results))
 
     async def _scrape(
         self, url: str, return_raw: bool = True, emitter=None, redirect=True
@@ -505,10 +505,10 @@ class Tools:
         def _get_all_content(html) -> str:
             return html2text.html2text(_clean_html(html))
 
-        def _summarize(self, text: str, max_words=2048) -> str:  # pragma: no cover
+        def _summarize(self, text: str, max_word: int = 2048) -> str:
             """Simple naive summarizer"""
             words = re.split(r"\s+", _clean_html(text))
-            return " ".join(words[:max_words])
+            return "\n".join("Summary:", " ".join(words[:max_words]))
 
         # / Helpers
 
@@ -566,20 +566,29 @@ class Tools:
         if emitter:
             await self._emit(emitter, {"type": "done", "url": url})
 
-        if return_raw:
-            return page_data
-
         content = _get_all_content(page_data)
+
+        # Add header to identify which url this was.
+        page_data_with_header = "\n".join([f"Contents of url: {url}", page_data])
+        content_with_header = (
+            "\n".join([f"Contents of url: {url}", content, "\n"])
+            if content and content.strip()
+            else ""
+        )
+
+        if return_raw:
+            return page_data_with_header
 
         max_size_check = int(self.valves.max_summary_size) or 0
         if max_size_check and len(content) >= max_size_check:
             content = content[:max_size_check]
+            content_with_header = "\n".join([f"Contents of url: {url}", content])
 
         if content and content.strip():
-            return content
+            return content_with_header
 
-        # If no content extracted, return the raw page_data
-        return page_data
+        # If no content extracted, return the raw page_data with header
+        return page_data_with_header
 
     get = scrape
     fetch = scrape
