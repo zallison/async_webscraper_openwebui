@@ -3,7 +3,7 @@ title: Async Webscraper
 author: Zack Allison <zack@zackallison.com>
 author_url: https://github.com/zallison
 git_url: https://github.com/zallison/async_webscraper_openwebui
-version: 0.2.1
+version: 0.2.2
 """
 
 """
@@ -323,7 +323,7 @@ class Tools:
     - Wikipedia helpers return concatenated page results as str.
     """
 
-    VERSION = "0.2.0"
+    VERSION = "0.2.2"
 
     @classmethod
     def _coverage_touch_class(cls) -> str:

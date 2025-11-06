@@ -28,6 +28,10 @@ Data of type XML or JSON will be parsed and returned as Python data structures (
 - get the wikipedia page for "Beer" and explain it to me
 
 -----
+### New in **v.0.2.2**:
+- Bug fix for wikipedia handling.
+- more test covering 99%
+
 ### New in **v.0.2.1**:
 - Bug fix
 - Better defaults set for valves
