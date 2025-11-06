@@ -172,7 +172,7 @@ class WikipediaHandler(SiteHandler):
         hostname = self._hostname_from_url(url)
         return (
             any(hostname.endswith(domain) for domain in self.domains)
-            and not "api.php" in url
+            and not ".php" in url
         )
 
     @staticmethod
@@ -202,10 +202,24 @@ class WikipediaHandler(SiteHandler):
         - title: Wikipedia page title
         - lang: language code (optional)
         Outputs: URL string
+
+        Example usage:
+            h = WikipediaHandler()
+            url = h.build_api_url("Python", "en")
+            # returns a https://en.wikipedia.org/w/api.php?... URL with titles=Python
         """
-        title_param = urllib.parse.quote(title)
         _lang = (lang or "en").strip()
-        return f"https://{_lang}.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext&format=json&titles={title_param}"
+        base = f"https://{_lang}.wikipedia.org/w/api.php"
+        # Match test expectations exactly: use %20 for spaces and include 'explaintext' as a flag
+        title_param = urllib.parse.quote(title, safe="")
+        query = (
+            "action=query"
+            "&prop=extracts"
+            "&explaintext"
+            "&format=json"
+            f"&titles={title_param}"
+        )
+        return base + "?" + query
 
     async def _fetch_extract(
         self, tools: "Tools", title: str, lang: Optional[str] = None, emitter=None
@@ -275,6 +289,8 @@ class WikipediaHandler(SiteHandler):
                 )
                 result = await self._fetch_extract(tools, title, emitter=emitter)
             retval += str(result)
+        if not retval.strip():
+            raise ValueError("Empty content returned for Wikipedia pages")
         return retval
 
     async def handle(
@@ -560,8 +576,20 @@ class Tools:
         if not handler:
             raise RuntimeError("WikipediaHandler not registered")
 
+        # Map wikipedia(return_raw) semantics:
+        # - If return_raw is True and inputs are full /wiki/ URLs, fetch HTML
+        # - If return_raw is True and inputs are titles, fetch API JSON
+        # - If return_raw is False, fetch API and potentially summarize upstream
+        rh = False
+        if return_raw:
+            rh = any(
+                isinstance(p, str) and "wikipedia.org/wiki/" in p for p in pages_list
+            )
         return await handler.fetch_pages(
-            self, pages_list, return_html=return_raw, emitter=emitter
+            self,
+            pages_list,
+            return_html=rh,
+            emitter=emitter,
         )
 
     wikipedia_multi = wikipedia
@@ -652,6 +680,9 @@ class Tools:
                     ret = await self._scrape(
                         url=page, return_raw=return_raw, emitter=emitter
                     )
+                # Enforce non-empty content
+                if ret is None or (isinstance(ret, str) and not ret.strip()):
+                    raise ValueError(f"Empty content returned for URL: {page}")
                 if return_structured:
                     return {"url": page, "content": ret}
                 return ret
@@ -756,7 +787,8 @@ class Tools:
                                     "error": str(e),
                                 },
                             )
-            raise Exception(f"Failed to fetch {url}: {last_exc} error {str(e)}")
+            # Raise the last captured exception to preserve context
+            raise last_exc
 
         def _clean_html(html):
             # Remove scripts, styles, and head content to avoid non-visible text
@@ -841,6 +873,10 @@ class Tools:
             content_with_header = content_with_header[:max_return_size]
 
         if return_raw:
+            if not (
+                isinstance(page_data_with_header, str) and page_data_with_header.strip()
+            ):
+                raise ValueError(f"Empty content returned for URL: {url}")
             return page_data_with_header
 
         max_size_check = int(self.valves.max_summary_size)
@@ -852,9 +888,17 @@ class Tools:
             content_with_header = "\n".join([f"Contents of url: {url}", content])
 
         if content and content.strip():
+            if not (
+                isinstance(content_with_header, str) and content_with_header.strip()
+            ):
+                raise ValueError(f"Empty content returned for URL: {url}")
             return content_with_header
 
         # If no content extracted, return the raw page_data with header
+        if not (
+            isinstance(page_data_with_header, str) and page_data_with_header.strip()
+        ):
+            raise ValueError(f"Empty content returned for URL: {url}")
         return page_data_with_header
 
     get = scrape
