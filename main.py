@@ -3,7 +3,7 @@ title: Async Webscraper
 author: Zack Allison <zack@zackallison.com>
 author_url: https://github.com/zallison
 git_url: https://github.com/zallison/async_webscraper_openwebui
-version: 0.2.2
+version: 0.2.3
 """
 
 """
@@ -146,6 +146,270 @@ class SiteHandler:
             result = await handler.handle(tools_instance, url, return_raw=True)
         """
         raise NotImplementedError("Subclasses must implement handle()")
+
+
+class GitHubHandler(SiteHandler):
+    """Handler for GitHub URLs using GitHub REST API.
+
+    Inputs: URLs with github.com domain (users, orgs, repos, and all subresources)
+    Outputs: API JSON responses as strings
+
+    Example usage:
+        handler = GitHubHandler()
+        result = await handler.handle(tools, "https://github.com/zallison/foghorn", return_html=True)
+        # Returns string with JSON from api.github.com/repos/zallison/foghorn
+        result = await handler.handle(tools, "https://github.com/zallison", return_html=True)
+        # Returns string with JSON from api.github.com/users/zallison
+    """
+
+    name = "github"
+    domains = (".github.com",)
+
+    def can_handle(self, url: str) -> bool:
+        """Check if this handler can process a given URL.
+
+        Inputs:
+        - url: target URL string
+        Outputs: True if URL is a GitHub repository URL
+        """
+        hostname = self._hostname_from_url(url)
+        return hostname == "github.com" or hostname.endswith(".github.com")
+
+    @staticmethod
+    def _parse_path(web_url: str):
+        """Extract path segments from GitHub URL.
+
+        Inputs:
+        - web_url: GitHub URL (e.g., https://github.com/owner/repo/tree/main)
+        Outputs: tuple (segments_list, is_org_or_user) where is_org_or_user=True if single segment
+
+        Example usage:
+            segments, is_user = GitHubHandler._parse_path("https://github.com/zallison")
+            # returns (["zallison"], True)
+            segments, is_user = GitHubHandler._parse_path("https://github.com/zallison/foghorn/branches")
+            # returns (["zallison", "foghorn", "branches"], False)
+        """
+        parsed = urllib.parse.urlparse(web_url)
+        path = parsed.path.strip("/")
+        if not path:
+            raise ValueError(f"Invalid GitHub URL: {web_url}")
+        segments = path.split("/")
+        # Single segment = user or org page
+        is_user_or_org = len(segments) == 1
+        return segments, is_user_or_org
+
+    def build_api_url(self, web_url: str) -> str:
+        """Convert GitHub web URL to GitHub API URL.
+
+        Inputs:
+        - web_url: GitHub URL (web or API)
+        Outputs: GitHub API URL string
+
+        Example usage:
+            h = GitHubHandler()
+            url = h.build_api_url("https://github.com/zallison")
+            # returns "https://api.github.com/users/zallison"
+            url = h.build_api_url("https://github.com/zallison/foghorn")
+            # returns "https://api.github.com/repos/zallison/foghorn"
+            url = h.build_api_url("https://github.com/zallison/foghorn/tree/main")
+            # returns "https://api.github.com/repos/zallison/foghorn/branches/main"
+        """
+        parsed = urllib.parse.urlparse(web_url)
+        hostname = parsed.hostname or ""
+
+        # Pass through if already API URL
+        if hostname == "api.github.com":
+            return web_url
+
+        segments, is_user_or_org = self._parse_path(web_url)
+
+        # User or organization page
+        if is_user_or_org:
+            user = segments[0]
+            # Try /users/{user} (works for both users and orgs)
+            return f"https://api.github.com/users/{user}"
+
+        # Repository URL
+        if len(segments) < 2:
+            raise ValueError(f"Invalid GitHub URL: {web_url}")
+
+        owner = segments[0]
+        repo = segments[1]
+        sub_segments = segments[2:] if len(segments) > 2 else []
+        base = f"https://api.github.com/repos/{owner}/{repo}"
+
+        # No subresource
+        if not sub_segments:
+            return base
+
+        # Map subresources
+        first = sub_segments[0]
+
+        # branches
+        if first == "branches":
+            if len(sub_segments) == 1:
+                return f"{base}/branches"
+            else:
+                branch = "/".join(sub_segments[1:])
+                return f"{base}/branches/{branch}"
+        # tree/{branch} -> branches/{branch}
+        elif first == "tree":
+            if len(sub_segments) > 1:
+                branch = "/".join(sub_segments[1:])
+                return f"{base}/branches/{branch}"
+            else:
+                return base
+        # blob/{branch}/{path} -> contents/{path}?ref={branch}
+        elif first == "blob":
+            if len(sub_segments) >= 3:
+                branch = sub_segments[1]
+                path = "/".join(sub_segments[2:])
+                return f"{base}/contents/{path}?ref={branch}"
+            else:
+                return base
+        # tags
+        elif first == "tags":
+            return f"{base}/tags"
+        # commits (with optional SHA)
+        elif first == "commits" or first == "commit":
+            if len(sub_segments) > 1:
+                sha = sub_segments[1]
+                return f"{base}/commits/{sha}"
+            else:
+                return f"{base}/commits"
+        # issues
+        elif first == "issues":
+            if len(sub_segments) > 1:
+                issue_num = sub_segments[1]
+                return f"{base}/issues/{issue_num}"
+            else:
+                return f"{base}/issues"
+        # pulls / pull requests
+        elif first == "pulls" or first == "pull":
+            if len(sub_segments) > 1:
+                pr_num = sub_segments[1]
+                return f"{base}/pulls/{pr_num}"
+            else:
+                return f"{base}/pulls"
+        # releases
+        elif first == "releases":
+            if len(sub_segments) > 1:
+                if sub_segments[1] == "latest":
+                    return f"{base}/releases/latest"
+                elif sub_segments[1] == "tag":
+                    tag = "/".join(sub_segments[2:])
+                    return f"{base}/releases/tags/{tag}"
+                else:
+                    release_id = sub_segments[1]
+                    return f"{base}/releases/{release_id}"
+            else:
+                return f"{base}/releases"
+        # milestones
+        elif first == "milestones":
+            if len(sub_segments) > 1:
+                milestone_num = sub_segments[1]
+                return f"{base}/milestones/{milestone_num}"
+            else:
+                return f"{base}/milestones"
+        # subscribers (watchers)
+        elif first == "subscribers" or first == "watchers":
+            return f"{base}/subscribers"
+        # stargazers
+        elif first == "stargazers":
+            return f"{base}/stargazers"
+        # contributors
+        elif first == "contributors":
+            return f"{base}/contributors"
+        # languages
+        elif first == "languages":
+            return f"{base}/languages"
+        # topics
+        elif first == "topics":
+            return f"{base}/topics"
+        # license
+        elif first == "license":
+            return f"{base}/license"
+        # readme
+        elif first == "readme":
+            return f"{base}/readme"
+        # contents (generic file/directory access)
+        elif first == "contents":
+            if len(sub_segments) > 1:
+                path = "/".join(sub_segments[1:])
+                return f"{base}/contents/{path}"
+            else:
+                return f"{base}/contents"
+        # actions/workflows
+        elif first == "actions":
+            if len(sub_segments) > 1 and sub_segments[1] == "workflows":
+                if len(sub_segments) > 2:
+                    workflow_id = sub_segments[2]
+                    return f"{base}/actions/workflows/{workflow_id}"
+                else:
+                    return f"{base}/actions/workflows"
+            elif len(sub_segments) > 1 and sub_segments[1] == "runs":
+                if len(sub_segments) > 2:
+                    run_id = sub_segments[2]
+                    return f"{base}/actions/runs/{run_id}"
+                else:
+                    return f"{base}/actions/runs"
+            else:
+                return f"{base}/actions/workflows"
+        # projects
+        elif first == "projects":
+            if len(sub_segments) > 1:
+                project_id = sub_segments[1]
+                return f"{base}/projects/{project_id}"
+            else:
+                return f"{base}/projects"
+        # security
+        elif first == "security":
+            if len(sub_segments) > 1 and sub_segments[1] == "advisories":
+                return f"{base}/security-advisories"
+            else:
+                return f"{base}/vulnerability-alerts"
+        # compare
+        elif first == "compare":
+            if len(sub_segments) > 1:
+                comparison = sub_segments[1]
+                return f"{base}/compare/{comparison}"
+            else:
+                return base
+        # tarball/zipball downloads
+        elif first == "archive":
+            if len(sub_segments) > 1:
+                ref = sub_segments[1]
+                # Default to tarball
+                return f"{base}/tarball/{ref}"
+            else:
+                return base
+        # fallback to base repo
+        else:
+            return base
+
+    async def handle(
+        self, tools: "Tools", url: str, return_html: Optional[bool] = None, emitter=None
+    ) -> str:
+        """Process a GitHub URL and return API response as string.
+
+        Inputs:
+        - tools: Tools instance
+        - url: GitHub repository URL
+        - return_html: ignored (always returns raw API response)
+        - emitter: optional event sink
+        Outputs: API response as string (JSON with header)
+
+        Example usage:
+            handler = GitHubHandler()
+            result = await handler.handle(tools, "https://github.com/zallison/foghorn")
+            # Returns string like "Contents of url: ...\n{\"name\": \"foghorn\", ...}"
+        """
+        # Transform to API URL if needed
+        api_url = self.build_api_url(url)
+        # Always fetch as raw string
+        return await tools._scrape(
+            url=api_url, return_raw=True, emitter=emitter, redirect=False
+        )
 
 
 class WikipediaHandler(SiteHandler):
@@ -435,6 +699,10 @@ class Tools:
         wiki_lang: str = Field(
             "en", description="Wikipedia language code for API requests."
         )
+        github_token: Optional[str] = Field(
+            None,
+            description="GitHub API token for authenticated requests (optional). If set, adds Bearer token to all requests.",
+        )
         allow_hosts: Optional[List[str]] = Field(
             None,
             description="If set, only allow requests to these hostnames (exact match).",
@@ -457,10 +725,11 @@ class Tools:
         # Use a generic type to avoid pydantic/tooling schema generation on custom classes
         self._handlers: List[object] = []
         self._ensure_synced()
-        # Register default handlers
+        # Register default handlers (order matters: first match wins)
         self.register_handler(
             WikipediaHandler(), self.wikipedia, ["wiki", "get_wiki_page"]
         )
+        self.register_handler(GitHubHandler())
         # Register scrape aliases
         self.register_handler(
             SiteHandler(), self.scrape, ["get", "fetch", "pull", "download", "html"]
@@ -479,6 +748,7 @@ class Tools:
             v.max_body_bytes,
             v.concurrency,
             v.wiki_lang,
+            v.github_token,
             v.allow_hosts,
             v.deny_hosts,
             v.max_return_size,
@@ -550,7 +820,17 @@ class Tools:
         self._applied_snapshot = snapshot
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create the shared aiohttp.ClientSession with current headers."""
+        """Get or create the shared aiohttp.ClientSession with current headers.
+
+        Inputs: none (uses current valves state)
+        Outputs: aiohttp.ClientSession with configured headers
+
+        Example usage:
+            tools = Tools()
+            tools.valves.github_token = "ghp_xxxxx"
+            sess = await tools._get_session()
+            # Session now includes Authorization: Bearer ghp_xxxxx
+        """
         self._ensure_synced()
         if self._session and not self._session.closed:
             return self._session
@@ -558,6 +838,9 @@ class Tools:
         headers = HEADERS.copy()
         if v.user_agent:
             headers["User-Agent"] = v.user_agent
+        if v.github_token:
+            headers["Authorization"] = f"Bearer {v.github_token}"
+            headers["Accept"] = "application/vnd.github+json"
         timeout = aiohttp.ClientTimeout(total=float(v.timeout)) if v.timeout else None
         self._session = aiohttp.ClientSession(headers=headers, timeout=timeout)
         return self._session
@@ -705,9 +988,12 @@ class Tools:
         - urls/url: one or many URLs
         - return_raw: True returns raw body; False returns plaintext summary
         - emitter: optional event sink receiving lifecycle events
-        - redirect: if True, Wikipedia URLs are routed to the API helper
+        - redirect: if True, registered handlers (Wikipedia, GitHub, etc.) process matching URLs
 
         Output: concatenated str of page results
+
+        Note: When redirect=True, the first registered handler that can_handle() a URL
+        will process it. Handler order is determined by registration order in __init__.
         """
         items = list(urls or [])
         if url:
@@ -739,12 +1025,21 @@ class Tools:
                 if emitter:
                     await self._emit(emitter, {"type": "start", "url": page})
                 if redirect:
-                    # Use handler for special handlers, like Wikipedia URLs
+                    # Use handler for special handlers, like Wikipedia, GitHub URLs
                     handler = self.get_handler_for(page)
-                    if handler and isinstance(handler, WikipediaHandler):
-                        ret = await handler.handle(
-                            self, page, return_html=return_raw, emitter=emitter
-                        )
+                    if handler and not isinstance(handler, SiteHandler) or (
+                        handler and type(handler) != SiteHandler
+                    ):
+                        # Found a specialized handler (not the base class)
+                        if isinstance(handler, WikipediaHandler):
+                            ret = await handler.handle(
+                                self, page, return_html=return_raw, emitter=emitter
+                            )
+                        else:
+                            # Generic handler path for GitHub and future handlers
+                            ret = await handler.handle(
+                                self, page, return_html=return_raw, emitter=emitter
+                            )
                     else:
                         ret = await self._scrape(
                             url=page, return_raw=return_raw, emitter=emitter
