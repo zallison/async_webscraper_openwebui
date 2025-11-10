@@ -195,7 +195,7 @@ async def test_wikipedia_handler_handle_plaintext():
 
 @pytest.mark.asyncio
 async def test_tools_register_and_get_handler():
-    """Test Tools.register_handler and get_handler_for."""
+    """Test Tools.register_handler and get_handler_for, including alias binding."""
     import main as main_mod
 
     main_mod = importlib.reload(importlib.import_module("main"))
@@ -214,7 +214,7 @@ async def test_tools_register_and_get_handler():
     assert handler is not None
     assert isinstance(handler, main_mod.WikipediaHandler)
 
-    # Register custom handler
+    # Register custom handler without aliases (back-compat path)
     custom_handler = CustomHandler()
     t.register_handler(custom_handler)
 
@@ -226,6 +226,19 @@ async def test_tools_register_and_get_handler():
     # Should return None for unhandled domains
     handler = t.get_handler_for("https://example.com/page")
     assert handler is None
+
+    # Register with explicit aliases pointing to a callable
+    async def alias_func(*args, **kwargs):
+        return "alias ok"
+
+    t.register_handler(CustomHandler(), alias_func, ["alias1", "alias2"])
+    assert hasattr(t, "alias1") and hasattr(t, "alias2")
+    out = await getattr(t, "alias1")()
+    assert out == "alias ok"
+
+    # Duplicate alias should raise
+    with pytest.raises(Exception):
+        t.register_handler(CustomHandler(), alias_func, ["alias1"])  # already exists
 
     await t.close()
 

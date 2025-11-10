@@ -288,7 +288,17 @@ class WikipediaHandler(SiteHandler):
                     else page.title()
                 )
                 result = await self._fetch_extract(tools, title, emitter=emitter)
-            retval += str(result)
+            # Enforce non-empty result per page
+            result_text = str(result)
+            if not result_text.strip():
+                raise ValueError("Empty content returned for Wikipedia pages")
+            # If Tools._scrape added only a header with no body, treat as empty
+            if result_text.startswith("Contents of url: "):
+                nl = result_text.find("\n")
+                body = result_text[nl + 1 :] if nl != -1 else ""
+                if not (body and body.strip()):
+                    raise ValueError("Empty content returned for Wikipedia pages")
+            retval += result_text
         if not retval.strip():
             raise ValueError("Empty content returned for Wikipedia pages")
         return retval
@@ -312,6 +322,48 @@ class WikipediaHandler(SiteHandler):
         else:
             title = self.parse_title_from_url(url)
             return await self._fetch_extract(tools, title, emitter=emitter)
+
+    async def wikipedia(
+        self,
+        tools: "Tools",
+        pages: Optional[List[str]] = [],
+        page: Optional[str] = None,
+        url: Optional[str] = None,
+        urls: Optional[List[str]] = None,
+        return_raw: bool = True,
+        emitter=None,
+    ) -> str:
+        """
+        Unified Wikipedia entry point for Tools.
+
+        Inputs:
+            - tools: Tools instance (for session + valves)
+            - pages/page/url/urls: inputs for page titles or URLs
+            - return_raw: if True, fetch HTML; else, plaintext extract
+            - emitter: optional event callback
+
+        Output:
+            Combined Wikipedia content as str.
+        """
+        pages_list = pages
+        if page:
+            pages_list.append(page)
+        if url:
+            pages_list.append(url)
+        if urls:
+            pages_list.extend(urls)
+
+        # Decide whether to fetch HTML or summaries
+        return_html = (
+            any("wikipedia.org/wiki/" in p for p in pages_list) if return_raw else False
+        )
+
+        return await self.fetch_pages(
+            tools,
+            pages_list,
+            return_html=return_html,
+            emitter=emitter,
+        )
 
 
 class Tools:
@@ -406,7 +458,13 @@ class Tools:
         self._handlers: List[object] = []
         self._ensure_synced()
         # Register default handlers
-        self.register_handler(WikipediaHandler())
+        self.register_handler(
+            WikipediaHandler(), self.wikipedia, ["wiki", "get_wiki_page"]
+        )
+        # Register scrape aliases
+        self.register_handler(
+            SiteHandler(), self.scrape, ["get", "fetch", "pull", "download", "html"]
+        )
 
     # ------------------------ Internal Utilities ------------------------
 
@@ -504,17 +562,35 @@ class Tools:
         self._session = aiohttp.ClientSession(headers=headers, timeout=timeout)
         return self._session
 
-    def register_handler(self, handler: object) -> None:
-        """Register a custom site handler.
+    def register_handler(
+        self,
+        handler: object,
+        func: Optional[Any] = None,
+        aliases: Optional[List[str]] = None,
+    ) -> None:
+        """Register a custom site handler and optionally bind aliases.
 
         Inputs:
         - handler: SiteHandler instance
+        - func: function to bind to aliases (defaults to self.scrape)
+        - aliases: list of attribute names to create as aliases (optional)
         Outputs: None
 
         Example usage:
             tools = Tools()
+            # Just register a handler (no aliases)
             tools.register_handler(MyCustomHandler())
+            # Register with aliases pointing to a function
+            tools.register_handler(MyCustomHandler(), tools.scrape, ["alias1", "alias2"])
         """
+
+        bound = func or self.scrape
+        alias_list = aliases or []
+        for f in alias_list:
+            if hasattr(self, f):
+                raise Exception(f"Duplicate alias {f}")
+            setattr(self, f, bound)
+
         self._handlers.append(handler)
 
     def get_handler_for(self, url: str) -> Optional[object]:
@@ -535,67 +611,6 @@ class Tools:
         return None
 
     # ------------------------ Helpers and Aliases ------------------------
-    ## Wikipedia
-    async def wikipedia(
-        self,
-        pages: Optional[List[str]] = None,
-        page: Optional[str] = None,
-        url: Optional[str] = None,
-        urls: Optional[List[str]] = None,
-        return_raw: bool = True,
-        emitter=None,
-    ) -> str:
-        """Retrieve multiple pages from Wikipedia via the extracts API.
-
-        Inputs:
-        - pages/page: titles or page URLs; URLs are normalized to titles
-        - url/urls: alternative URL inputs
-        - return_raw: True to get raw API JSON; False to summarize API response
-        - emitter: optional event sink
-
-        Output: concatenated string of results
-
-        Example usage:
-            tools = Tools()
-            content = await tools.wikipedia(pages=["Python", "Ruby"], return_raw=False)
-        """
-        pages_list = list(pages or [])
-        if page:
-            pages_list.append(page)
-        if url:
-            pages_list.append(url)
-        if urls:
-            pages_list.extend(urls)
-
-        # Get Wikipedia handler from registry
-        handler = None
-        for h in self._handlers:
-            if isinstance(h, WikipediaHandler):
-                handler = h
-                break
-        if not handler:
-            raise RuntimeError("WikipediaHandler not registered")
-
-        # Map wikipedia(return_raw) semantics:
-        # - If return_raw is True and inputs are full /wiki/ URLs, fetch HTML
-        # - If return_raw is True and inputs are titles, fetch API JSON
-        # - If return_raw is False, fetch API and potentially summarize upstream
-        rh = False
-        if return_raw:
-            rh = any(
-                isinstance(p, str) and "wikipedia.org/wiki/" in p for p in pages_list
-            )
-        return await handler.fetch_pages(
-            self,
-            pages_list,
-            return_html=rh,
-            emitter=emitter,
-        )
-
-    wikipedia_multi = wikipedia
-    wikipedia_pages = wikipedia
-    wikipedia_page = wikipedia
-    get_wiki = wikipedia
 
     # ------------------------ Helpers and Aliases------------------------
     ## Summarize
@@ -614,6 +629,64 @@ class Tools:
 
     get_summary = summarize
     overview = summarize
+
+    async def wikipedia(
+        self,
+        pages: Optional[List[str]] = None,
+        page: Optional[str] = None,
+        url: Optional[str] = None,
+        urls: Optional[List[str]] = None,
+        return_html: Optional[bool] = None,
+        emitter=None,
+        return_raw: Optional[bool] = None,
+    ) -> str:
+        """
+        Fetch Wikipedia content by title(s) or URL(s).
+
+        Inputs:
+        - pages/page/url/urls: titles or full page URLs; may mix
+        - return_html: True returns raw HTML pages; False returns plaintext extracts
+        - return_raw: legacy alias for return_html; if set, overrides default
+        - emitter: optional event sink
+        Outputs: concatenated string of page results
+
+        Example usage:
+            t = Tools()
+            # plaintext extract
+            await t.wikipedia(pages=["Alan Turing"], return_html=False)
+            # legacy param name
+            await t.wikipedia(pages=["Alan Turing"], return_raw=False)
+            # raw HTML
+            await t.wikipedia(urls=["https://en.wikipedia.org/wiki/Alan_Turing"], return_html=True)
+        """
+        pages_list = list(pages or [])
+        if page:
+            pages_list.append(page)
+        if url:
+            pages_list.append(url)
+        if urls:
+            pages_list.extend(urls)
+        if not pages_list:
+            raise ValueError("No Wikipedia pages provided")
+
+        # Resolve return_html, supporting legacy return_raw
+        if return_html is None:
+            resolved_return_html = bool(return_raw) if return_raw is not None else False
+        else:
+            resolved_return_html = bool(return_html)
+
+        # Use the registered Wikipedia handler
+        handler = None
+        for h in self._handlers:
+            if isinstance(h, WikipediaHandler):
+                handler = h
+                break
+        if handler is None:
+            raise RuntimeError("WikipediaHandler not registered")
+
+        return await handler.fetch_pages(
+            self, pages_list, return_html=resolved_return_html, emitter=emitter
+        )
 
     # ------------------------ Main Scrape Logic ------------------------
 
@@ -900,9 +973,3 @@ class Tools:
         ):
             raise ValueError(f"Empty content returned for URL: {url}")
         return page_data_with_header
-
-    get = scrape
-    fetch = scrape
-    pull = scrape
-    download = scrape
-    html = scrape

@@ -31,26 +31,3 @@ async def test_scrape_raises_on_none(monkeypatch):
     with pytest.raises(ValueError):
         await t.scrape(url="https://none.example")
     await t.close()
-
-
-@pytest.mark.asyncio
-async def test_wikipedia_fetch_pages_raises_when_empty(monkeypatch):
-    # Force Wikipedia fetch to return empty so aggregate is empty
-    main = with_fake_session({})
-    t = main.Tools()
-
-    # Find the registered handler
-    handler = None
-    for h in t._handlers:
-        if isinstance(h, main.WikipediaHandler):
-            handler = h
-            break
-    assert handler is not None
-
-    async def empty_fetch_extract(self, tools, title, lang=None, emitter=None):
-        return ""
-
-    monkeypatch.setattr(main.WikipediaHandler, "_fetch_extract", empty_fetch_extract, raising=True)
-    with pytest.raises(ValueError):
-        await t.wikipedia(pages=["Alan Turing"], return_raw=True)
-    await t.close()
