@@ -632,7 +632,7 @@ class Tools:
     - Wikipedia helpers return concatenated page results as str.
     """
 
-    VERSION = "0.2.2"
+    VERSION = "0.2.3"
 
     @classmethod
     def _coverage_touch_class(cls) -> str:
