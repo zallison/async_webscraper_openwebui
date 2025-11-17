@@ -315,23 +315,16 @@ class GitHubHandler(SiteHandler):
         elif first == "subscribers" or first == "watchers":
             return f"{base}/subscribers"
         # stargazers
-        elif first == "stargazers":
-            return f"{base}/stargazers"
-        # contributors
-        elif first == "contributors":
-            return f"{base}/contributors"
-        # languages
-        elif first == "languages":
-            return f"{base}/languages"
-        # topics
-        elif first == "topics":
-            return f"{base}/topics"
-        # license
-        elif first == "license":
-            return f"{base}/license"
-        # readme
-        elif first == "readme":
-            return f"{base}/readme"
+        elif first in [
+            "stargazers",
+            "contributors",
+            "languages",
+            "topics",
+            "license",
+            "readme",
+        ]:
+            return f"{base}/{first}"
+
         # contents (generic file/directory access)
         elif first == "contents":
             if len(sub_segments) > 1:
@@ -568,7 +561,7 @@ class WikipediaHandler(SiteHandler):
         return retval
 
     async def handle(
-        self, tools: "Tools", url: str, return_html: Optional[bool] = None, emitter=None
+        self, tools: "Tools", url: str, return_html: Optional[bool] = True, emitter=None
     ) -> str:
         """Process a Wikipedia URL.
 
@@ -727,12 +720,14 @@ class Tools:
         self._ensure_synced()
         # Register default handlers (order matters: first match wins)
         self.register_handler(
-            WikipediaHandler(), self.wikipedia, ["wiki", "get_wiki_page"]
+            WikipediaHandler(), aliases=["wikipedia" "wiki", "get_wiki_page"]
         )
-        self.register_handler(GitHubHandler())
+        self.register_handler(
+            GitHubHandler(), aliases=["github", "github_page", "github_api"]
+        )
         # Register scrape aliases
         self.register_handler(
-            SiteHandler(), self.scrape, ["get", "fetch", "pull", "download", "html"]
+            SiteHandler(), aliases=["get", "fetch", "pull", "download", "html", "run"]
         )
 
     # ------------------------ Internal Utilities ------------------------
@@ -868,7 +863,7 @@ class Tools:
         """
 
         bound = func or self.scrape
-        alias_list = aliases or []
+        alias_list = []  # aliases or []
         for f in alias_list:
             if hasattr(self, f):
                 raise Exception(f"Duplicate alias {f}")
@@ -1027,19 +1022,11 @@ class Tools:
                 if redirect:
                     # Use handler for special handlers, like Wikipedia, GitHub URLs
                     handler = self.get_handler_for(page)
-                    if handler and not isinstance(handler, SiteHandler) or (
-                        handler and type(handler) != SiteHandler
-                    ):
-                        # Found a specialized handler (not the base class)
-                        if isinstance(handler, WikipediaHandler):
-                            ret = await handler.handle(
-                                self, page, return_html=return_raw, emitter=emitter
-                            )
-                        else:
-                            # Generic handler path for GitHub and future handlers
-                            ret = await handler.handle(
-                                self, page, return_html=return_raw, emitter=emitter
-                            )
+                    if handler:
+                        ret = await handler.handle(
+                            self, page, return_html=return_raw, emitter=emitter
+                        )
+
                     else:
                         ret = await self._scrape(
                             url=page, return_raw=return_raw, emitter=emitter
