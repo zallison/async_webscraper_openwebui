@@ -48,31 +48,6 @@ Data of type XML or JSON will be parsed and returned as Python data structures (
 - Migrated Wikipedia logic into WikipediaHandler
 - Fixed Wikipedia URL redirect bug in scrape()
 
-----
-### New in v.0.1.4:
-- Scrape function now allow for multiple urls to be given
-- Bugfixes, better aliases
-
-### New in v0.1.3:
-- added wikipedia helpers
-- auto-redirect to wiki api
-
-### New in v0.1.2:
-- removed beautiful soup dependencies
-- made html2text optional, with a lxml fallback function
-- Caching changed to built in lru_cache
-- uses fake_useragent if available, falls back to a static string
-
-### New in v0.1.1:
-- Automatically detect JSON and XML data and return it without parsing
-
-----
-### Notes:
-- Your model may not like "scrape" so try "fetch", "get", or others if blocked.
-- Sometimes blocked by "anti-scrape" mechanism
-- Try the "Fine Tuning" section for an example system instruction.
-
-
 ------
 ## Valves:
 
@@ -113,23 +88,23 @@ import asyncio
 
 async def main():
     t = Tools()
-    
+
     # Base repo info
     result = await t.scrape(url="https://github.com/zallison/foghorn", redirect=True)
     print(result)  # JSON string with repo metadata
-    
+
     # Branch info (tree/{branch} maps to branches/{branch})
     result = await t.scrape(url="https://github.com/torvalds/linux/tree/master", redirect=True)
     print(result)  # JSON string with branch details
-    
+
     # List all branches
     result = await t.scrape(url="https://github.com/zallison/foghorn/branches", redirect=True)
     print(result)  # JSON array of branches
-    
+
     # Authenticated requests (higher rate limits)
     t.valves.github_token = "ghp_your_token_here"
     result = await t.scrape(url="https://github.com/zallison/foghorn", redirect=True)
-    
+
     await t.close()
 
 asyncio.run(main())
